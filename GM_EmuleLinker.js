@@ -1,13 +1,15 @@
 // ==UserScript==
 // @name        Emule Linker 
-// @namespace   http://userscripts.org/scripts/show/154608
+// @namespace   https://github.com/alo0/GM_EmuleLinker
 // @description Add all ED2K links (with one click) into remote emule/amule/mldonkey or any application installed on your system that handles ed2k links 
 // @include     *
 // @grant		GM_getValue
 // @grant		GM_setValue
 // @grant		GM_registerMenuCommand
 // @grant 		GM_log
-// @version     0.7
+// @version     0.8
+// @updateURL       https://raw.githubusercontent.com/alo0/GM_EmuleLinker/master/GM_EmuleLinker.js
+// @downloadURL     https://raw.githubusercontent.com/alo0/GM_EmuleLinker/master/GM_EmuleLinker.js
 // -------------------------------------------------------------------------
 // WHAT IT DOES:
 // The script scans pages for ed2k links. It collects these links
@@ -28,13 +30,16 @@
 // 5. (optional) restrict the pages where this script is active by modifying the @include variable of this script
 // -------------------------------------------------------------------------
 // CHANGELOG
+// 0.8 (2018-11-11)
+//	+ Bugfix: Now detect which method to use to decode URL : first decodeURIComponent() then unescape()
+//  + Custom link is now using a post method and ending by a / is not mandatory in this case
 // 0.7 (2013-01-27)
 //  + Local appli ed2k handler support
 //  + Checkbox filter
 //  + Category selector
 //  + Remove duplicate links check
 //  + Add suffix to identical filename (but with different links)
-//  + Key accelerator support (ctrl+alt+...  a, c, m, o, s, x)
+//  + Key accelerator support (ctrl+alt+...  m, a, c, o, s, x)
 //  + Bugfix: URL style was applying to the whole page
 //	+ GM_config.js is now integrated into this script (for quick bugfix inside the lib)
 // 0.6 (2013-01-17): 
@@ -60,7 +65,7 @@
 // -------------------------------------------------------------------------
 // These are the default values. Use the setting dialog to modify the parameters
 
-var DEBUG_MODE = 0;	// Mode debug 0|1
+var DEBUG_MODE = 1;	// Mode debug 0|1
 
 // emule/amule/mldonkey server parameters
 var ed2kDlMethod = 'local';	
@@ -898,12 +903,19 @@ function getEd2kLinks(links, files) {
 	for (i=0; i<allLinks.snapshotLength; i++) {
 		thisLink = allLinks.snapshotItem(i);
 		if(thisLink.href.match(/^ed2k*/)) {
-
-			// we remove any encodings from the link and make sure '|' separators are present
-			lnk=decodeURIComponent(thisLink.href);
-			lnk=lnk.replace(/\%257C/gi, '|');
-			lnk=lnk.replace(/\%7C/gi, '|');
 			
+			// to detect if the url encoding has produced ISO Latin or UTF8 encoding.
+			// decodeURIComponent throws an exception on invalid UTF8 sequences.
+			try {
+				lnk=decodeURIComponent(thisLink.href);	// block on certain char (example: %E0 which is à)
+			}
+			catch (e) {
+				lnk=unescape(thisLink.href);
+				// The unescape() function was deprecated in JavaScript version 1.5
+				// But some of the links has been encoded using escape and some encoded
+				// char can not be decoded with the new method decodeURIComponent()
+			}
+
 			// ingore duplicates links
 			if (links.indexOf(lnk)>=0) {
 				continue; 
@@ -1277,6 +1289,9 @@ function addButton() {
 		for (var i=0; i<links.length; i++) {
 			window.location.replace(links[i]);
 		}
+	} else if(ed2kDlMethod=='custom') {
+		post(emuleUrl, href);
+		//silentPost(emuleUrl, "");
 	}
 	else {
 		var e_win = window.open(href, 'emule');
@@ -1414,10 +1429,6 @@ function getAddLink(links) {
 		}
 	}
 
-	// then we encode the link (so the filename is encoded twice)
-	lnk=encodeURIComponent(lnk);
-	lnk=lnk.replace(/\%257C/gi, '|');
-	lnk=lnk.replace(/\%7C/gi, '|');
 
 			
 	switch(ed2kDlMethod) {
@@ -1426,14 +1437,27 @@ function getAddLink(links) {
 			break;
 		case 'emule':
 			url = getEmuleLink(lnk, cat);
+			// GET method: then we encode the link (so the filename is encoded twice)
+			lnk=encodeURIComponent(lnk);
+			lnk=lnk.replace(/\%257C/gi, '|');
+			lnk=lnk.replace(/\%7C/gi, '|');
 			break;
 		case 'amule':
 			url = getAmuleLink(lnk, cat);
+			// GET method: then we encode the link (so the filename is encoded twice)
+			lnk=encodeURIComponent(lnk);
+			lnk=lnk.replace(/\%257C/gi, '|');
+			lnk=lnk.replace(/\%7C/gi, '|');
 			break;
 		case 'mldonkey':
 			url = getMLDonkeyLink(lnk);
+			// GET method: then we encode the link (so the filename is encoded twice)
+			lnk=encodeURIComponent(lnk);
+			lnk=lnk.replace(/\%257C/gi, '|');
+			lnk=lnk.replace(/\%7C/gi, '|');
 			break;
 		case 'custom':
+			// POST method: no need to encode the link
 			url = getCustomLink(lnk, cat);
 			break;
 		default:
@@ -1473,13 +1497,17 @@ function getMLDonkeyLink(links) {
 }
 
 /**
-* formatting the URL to add ed2k links to a custom application
+* formatting the URL to add ed2k links to a custom application via a post form
 */
 function getCustomLink(links, cat) {
-	// Url to add ed2k links to custom application
+	// Url to add ed2k links to custom application as a post form
+	var params = new Array(); 
 
-	return 'http://127.0.0.1/omicron/ed2k.php?cat=' + cat + '&post=' + encodeURIComponent(window.location) + '&ed2k=' + links;
-	//return emuleUrl +'ed2k.php?cat=' + cat + '&post=' + encodeURIComponent(window.location) + '&ed2k=' + links;
+	params["cat"] = cat;	// the category
+	params["ref"] = window.location;	// the post where the links come from
+	params["ed2k"] = links;	// the ed2k links
+
+	return params;
 }
 
 // -------------------------------------------------------------------------	
@@ -1544,7 +1572,7 @@ function saveConfig() {
 	ed2kDlMethod = GM_config.get('ed2kDlMethod');
 
 	emuleUrl = GM_config.get('emuleUrl');
-	if(emuleUrl.charAt(emuleUrl.length-1) != '/') {
+	if( (ed2kDlMethod!='custom') && emuleUrl.charAt(emuleUrl.length-1) != '/') {
 		GM_config.set("emuleUrl", emuleUrl + '/');
 		emuleUrl += '/';
 	}
@@ -1658,5 +1686,73 @@ function strToCat(str) {
 	}
 	else {
 		return cat;
+	}
+}
+
+/**
+* Submit a post
+* source : http://stackoverflow.com/questions/133925/javascript-post-request-like-a-form-submit
+*
+* ex: post('/contact/', {name: 'Johnny Bravo'});
+*/
+function post(path, params, method) {
+    method = method || "post"; // Set method to post by default if not specified.
+
+    // The rest of this code assumes you are not using a library.
+    // It can be made less wordy if you use one.
+    var form = document.createElement("form");
+    form.setAttribute("method", method);
+    form.setAttribute("action", path);
+	form.setAttribute("target", "emule");
+
+    for(var key in params) {
+        if(params.hasOwnProperty(key)) {
+            var hiddenField = document.createElement("input");
+            hiddenField.setAttribute("type", "hidden");
+            hiddenField.setAttribute("name", key);
+            hiddenField.setAttribute("value", params[key]);
+
+            form.appendChild(hiddenField);
+         }
+    }
+
+    document.body.appendChild(form);
+    form.submit();
+}
+
+function silentGet(url) {
+	if (window.XMLHttpRequest) { req = new XMLHttpRequest(); }
+	else if (window.ActiveXObject) { req = new ActiveXObject("Microsoft.XMLHTTP"); }
+	req.onreadystatechange = function() {silentClose(url, "emule");};
+	req.open("GET", url, true);
+	req.send("");
+}
+
+function silentPost(url, params) {
+	if (window.XMLHttpRequest) { req = new XMLHttpRequest(); }
+	else if (window.ActiveXObject) { req = new ActiveXObject("Microsoft.XMLHTTP"); }
+	
+	req.onreadystatechange = function() {silentClose(url, "emule");};
+
+	req.open("POST", url, true);
+	req.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+	
+	var data="";
+	for(var key in params) {
+        if(params.hasOwnProperty(key)) {
+			if(data=="") {
+				data=key+"="+encodeURIComponent(params[key]);
+			} else {
+				data=data+"&"+key+"="+encodeURIComponent(params[key]);
+			}
+		}
+	}
+	req.send(data);
+}
+
+function silentClose(path, params) {
+	//document.getElementById(target).innerHTML = req.responseText;
+	if (req.readyState == 4 && (req.status == 200 || req.status == 0)) {
+		alert("OK: "+req.responseText); // Données textuelles récupérées
 	}
 }
