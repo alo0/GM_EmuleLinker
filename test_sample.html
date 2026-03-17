@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Test sample page for EmuleLinker</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: #f7f9fa;
+            color: #222;
+            padding: 0 0 0 0;
+        }
+        h1 {
+            text-align: center;
+            margin-top: 0px;
+            font-size: 2.5em;
+            color: #2a4d69;
+            letter-spacing: 1px;
+        }
+        h2 {
+            color: #4b86b4;
+            margin-top: 10px;
+            margin-bottom: 10px;
+            border-bottom: 2px solid #bfe2ff;
+            padding-bottom: 5px;
+        }
+        p {
+            max-width: 700px;
+            margin: 0 auto 20px auto;
+            line-height: 1.6;
+        }
+        table {
+            border-collapse: collapse;
+            margin: 30px auto;
+            width: 90%;
+            max-width: 900px;
+            background: #fff;
+            box-shadow: 0 2px 8px rgba(44, 62, 80, 0.07);
+        }
+        th, td {
+            padding: 12px 18px;
+            text-align: left;
+        }
+        th {
+            background: #4b86b4;
+            color: #fff;
+            font-weight: 600;
+            border-bottom: 3px solid #bfe2ff;
+        }
+        tr:nth-child(even) {
+            background: #f1f7fb;
+        }
+        tr:hover {
+            background: #e3f0fa;
+        }
+        a {
+            color: #2a4d69;
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        a:hover {
+            color: #63ace5;
+            text-decoration: underline;
+        }
+        /* Add spacing before summary */
+        .spacer {
+            height: 200px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Test sample page for EmuleLinker</h1>
+    <div class="spacer"></div>
+    <h2>Summary</h2>
+    <p>This is a page to test the GreaseMonkey EmuleLinker Script. It is composed of several ed2k links and for each link the description should match the results</p>
+
+    <h2>ED2K Links Table</h2>
+    <table>
+        <tr>
+            <th>#</th>
+            <th>ED2K Links</th>
+            <th>Size</th>
+            <th>Description</th>
+        </tr>
+        <tr>
+            <td>1</td>
+            <td><a href="ed2k://|file|example1.mp3|1200000|ABCDEF1234567890|/">example1.mp3</a></td>
+            <td>1.2 MB</td>
+            <td>Sample audio file</td>
+        </tr>
+        <tr>
+            <td>2</td>
+            <td><a href="ed2k://|file|example2.avi|654321|123456ABCDEF7890|/">example2.avi</a></td>
+            <td>700 MB</td>
+            <td>Sample video file</td>
+        </tr>
+        <tr>
+            <td>3</td>
+            <td><a href="ed2k://|file|example3.zip|987654|FEDCBA0987654321|/">example3.zip</a></td>
+            <td>50 MB</td>
+            <td>Sample archive</td>
+        </tr>
+        <tr>
+            <td>4</td>
+            <td><a href="ed2k://|file|example4.pdf|456789|A1B2C3D4E5F67890|/">example4.pdf</a></td>
+            <td>2.5 MB</td>
+            <td>Sample PDF document</td>
+        </tr>
+        <tr>
+            <td>5</td>
+            <td><a href="ed2k://|file|example5.jpg|321654|0987FEDCBA654321|/">example5.jpg</a></td>
+            <td>3.1 MB</td>
+            <td>Sample image file</td>
+        </tr>
+        <tr>
+            <td>6</td>
+            <td><a href="ed2k://|file|example6.docx|789123|1A2B3C4D5E6F7890|/">example6.docx</a></td>
+            <td>1.8 MB</td>
+            <td>Sample Word document</td>
+        </tr>
+        <tr>
+            <td>7</td>
+            <td><a href="ed2k://|file|example7.mp4|852963|ABC123DEF4567890|/">example7.mp4</a></td>
+            <td>350 MB</td>
+            <td>Sample MP4 video</td>
+        </tr>
+        <tr>
+            <td>8</td>
+            <td><a href="ed2k://|file|example8.txt|147258|FEDCBA1234567890|/">example8.txt</a></td>
+            <td>12 KB</td>
+            <td>Sample text file</td>
+        </tr>
+        <tr>
+            <td>9</td>
+            <td><a href="ed2k://|file|example9.iso|963852|1234567890ABCDEF|/">example9.iso</a></td>
+            <td>1.4 GB</td>
+            <td>Sample ISO image</td>
+        </tr>
+    </table>
+</body>
+</html>
