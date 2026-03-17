@@ -8,13 +8,13 @@ Presentation
 
 It parsed the current HTML page and display all ed2k links found within the current page in a popup box displayed in the top left corner of the page.
 
-![Main screen](https://github.com/alo0/GM_EmuleLinker/blob/master/screenshots/screenshot_main-0.7.jpg?raw=true)
+![Main screen](https://github.com/alo0/GM_EmuleLinker/blob/master/screenshots/screenshot_main-0.9.png?raw=true)
 
 Then you can add all of them in one click into your emule/amule/mldonkey application</br>
 
 The script provide a settings screen to match your configuration and customize the popup box
 
-![Settings screen](https://github.com/alo0/GM_EmuleLinker/blob/master/screenshots/screenshot_settings-0.7.jpg?raw=true)
+![Settings screen](https://github.com/alo0/GM_EmuleLinker/blob/master/screenshots/screenshot_settings-0.9.png?raw=true)
 
 How to install
 --------------
