@@ -84,57 +84,63 @@
         </tr>
         <tr>
             <td>1</td>
-            <td><a href="ed2k://|file|example1.mp3|1200000|ABCDEF1234567890|/">example1.mp3</a></td>
-            <td>1.2 MB</td>
+            <td><a href="ed2k://|file|example1.mp3|1048576|ABCDEF1234567890|/">example1.mp3</a></td>
+            <td>1 MiB</td>
             <td>Sample audio file</td>
         </tr>
         <tr>
             <td>2</td>
-            <td><a href="ed2k://|file|example2.avi|654321|123456ABCDEF7890|/">example2.avi</a></td>
-            <td>700 MB</td>
+            <td><a href="ed2k://|file|example2.avi|734003200|123456ABCDEF7890|/">example2.avi</a></td>
+            <td>700 MiB</td>
             <td>Sample video file</td>
         </tr>
         <tr>
             <td>3</td>
-            <td><a href="ed2k://|file|example3.zip|987654|FEDCBA0987654321|/">example3.zip</a></td>
-            <td>50 MB</td>
-            <td>Sample archive</td>
-        </tr>
-        <tr>
-            <td>4</td>
-            <td><a href="ed2k://|file|example4.pdf|456789|A1B2C3D4E5F67890|/">example4.pdf</a></td>
-            <td>2.5 MB</td>
-            <td>Sample PDF document</td>
-        </tr>
-        <tr>
-            <td>5</td>
-            <td><a href="ed2k://|file|example5.jpg|321654|0987FEDCBA654321|/">example5.jpg</a></td>
-            <td>3.1 MB</td>
-            <td>Sample image file</td>
-        </tr>
-        <tr>
-            <td>6</td>
-            <td><a href="ed2k://|file|example6.docx|789123|1A2B3C4D5E6F7890|/">example6.docx</a></td>
-            <td>1.8 MB</td>
-            <td>Sample Word document</td>
-        </tr>
-        <tr>
-            <td>7</td>
-            <td><a href="ed2k://|file|example7.mp4|852963|ABC123DEF4567890|/">example7.mp4</a></td>
-            <td>350 MB</td>
-            <td>Sample MP4 video</td>
-        </tr>
-        <tr>
-            <td>8</td>
-            <td><a href="ed2k://|file|example8.txt|147258|FEDCBA1234567890|/">example8.txt</a></td>
-            <td>12 KB</td>
+            <td><a href="ed2k://|file|example8.txt|12288|FEDCBA1234567890|/">example3.txt</a></td>
+            <td>12 KiB</td>
             <td>Sample text file</td>
         </tr>
         <tr>
-            <td>9</td>
-            <td><a href="ed2k://|file|example9.iso|963852|1234567890ABCDEF|/">example9.iso</a></td>
-            <td>1.4 GB</td>
+            <td>4</td>
+            <td><a href="ed2k://|file|example9.iso|1073741824|1234567890ABCDEF|/">example4.iso</a></td>
+            <td>1 GiB</td>
             <td>Sample ISO image</td>
+        </tr>
+        <tr>
+            <td>5</td>
+            <td><a href="ed2k://|file|Documentary Planet Earth 4K.mp4|4294967296|1A2B3C4D5E6F7A8B9C0D1E2F3A4B5C6D|h=YNCKHTQCWBTRHHQTGPWDQPGBIZJREOB5|/">Documentary Planet Earth 4K.mp4</a></td>
+            <td>4 GB</td>
+            <td>Lien ed2k avec hash <strong>AICH</strong> (h=...) en plus du hash MD4 — doit être détecté et affiché normalement</td>
+        </tr>
+        <tr>
+            <td>6</td>
+            <td><a href="ed2k://|file|Été à Paris (Café).mp3|8543210|3F8E1D2C4B5A69786950413EAB7CD821|/">Été à Paris (Café).mp3</a></td>
+            <td>8.1 MB</td>
+            <td>Caractères spéciaux <strong>bruts</strong> dans le href (accents, espaces, parenthèses) — doit afficher le nom tel quel</td>
+        </tr>
+        <tr>
+            <td>7</td>
+            <td><a href="ed2k://|file|Conf%C3%A9rence%20T%C3%A9l%C3%A9phonique%20%28v2.0%29.mkv|1879048192|9C8B7A6D5E4F32107856943A12BCDE01|/">Conférence Téléphonique (v2.0).mkv</a></td>
+            <td>1.75 GB</td>
+            <td>Nom <strong>encodé une fois</strong> dans le href (URL encoding UTF-8) — doit décoder et afficher : Conférence Téléphonique (v2.0).mkv</td>
+        </tr>
+        <tr>
+            <td>8</td>
+            <td><a href="ed2k://|file|Fran%25C3%25A7ois%2520%2526%2520Marie%2520%255BR%25C3%25A9sum%25C3%25A9%255D.docx|56789012|AB12CD34EF56789012ABCDEF34567890|/">François &amp; Marie [Résumé].docx</a></td>
+            <td>54.1 MB</td>
+            <td>Nom <strong>double-encodé</strong> dans le href (% → %25) — doit décoder deux fois et afficher : François &amp; Marie [Résumé].docx</td>
+        </tr>
+        <tr>
+            <td>9</td>
+            <td><a href="ed2k://%7Cfile%7C%C3%93pera%20Espa%C3%B1ola%20%28Colecci%C3%B3n%29.flac%7C287654321%7C5E6F7A8B9C0D1E2F3A4B5C6D7E8F9012%7C%2F">Ópera Española (Colección).flac</a></td>
+            <td>274.3 MB</td>
+            <td><code>ed2k://</code> préservé mais <strong>tout le reste encodé</strong> (%7C, %2F...) — complémentaire du cas 13 : doit être détecté (commence par ed2k://) et décoder le nom correctement</td>
+        </tr>
+        <tr>
+            <td>10</td>
+            <td><a href="ed2k%3A%2F%2F%7Cfile%7CB%C3%BCcher%20%C3%BCber%20Ger%C3%A4te%20%28%C3%A9dition%29.pdf%7C15728640%7CF0E1D2C3B4A5968778695047312ABCDE%7C%2F">Bücher über Geräte (édition).pdf</a></td>
+            <td>15 MB</td>
+            <td>Lien ed2k <strong>intégralement encodé</strong> dans le href (ed2k:// → ed2k%3A%2F%2F) — Ne sera PAS détecté par le script (test de limitation)</td>
         </tr>
     </table>
 </body>

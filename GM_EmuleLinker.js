@@ -1,22 +1,23 @@
 // ==UserScript==
-// @name        Emule Linker 
+// @name        Emule Linker
 // @namespace   https://github.com/alo0/GM_EmuleLinker
-// @description Add all ED2K links (with one click) into remote emule/amule/mldonkey or any application installed on your system that handles ed2k links 
+// @description Add all ED2K links (with one click) into remote emule/amule/mldonkey or any application installed on your system that handles ed2k links
 // @include     *
 // @grant		GM_getValue
 // @grant		GM_setValue
 // @grant		GM_registerMenuCommand
 // @grant 		GM_log
-// @version     0.8
+// @version     0.9
 // @updateURL       https://raw.githubusercontent.com/alo0/GM_EmuleLinker/master/GM_EmuleLinker.js
 // @downloadURL     https://raw.githubusercontent.com/alo0/GM_EmuleLinker/master/GM_EmuleLinker.js
+// ==/UserScript==
 // -------------------------------------------------------------------------
 // WHAT IT DOES:
 // The script scans pages for ed2k links. It collects these links
 // and displays them in a (closable) popup box in the upper left
 // hand corner of the page. Then, you can add all of them into emule
 // or separately.
-// 
+//
 // This script has been inspired from these scripts below
 // http://userscripts.org/scripts/show/4011
 // http://userscripts.org/scripts/show/11310
@@ -30,6 +31,14 @@
 // 5. (optional) restrict the pages where this script is active by modifying the @include variable of this script
 // -------------------------------------------------------------------------
 // CHANGELOG
+// 0.9 (2025-10-29)
+//  + adding password support for amule mode
+//  + adding file size in normal mode
+//  + Checking double encoding of filename
+//  + Enhance the css style of main popup
+//  + Default settings changed as screen resolution are getting bigger
+//  + Bugfix: Encoding of newline was necessary for some ed2k links
+//  + Code refactoring and cleaning
 // 0.8 (2018-11-11)
 //	+ Bugfix: Now detect which method to use to decode URL : first decodeURIComponent() then unescape()
 //  + Custom link is now using a post method and ending by a / is not mandatory in this case
@@ -42,14 +51,14 @@
 //  + Key accelerator support (ctrl+alt+...  m, a, c, o, s, x)
 //  + Bugfix: URL style was applying to the whole page
 //	+ GM_config.js is now integrated into this script (for quick bugfix inside the lib)
-// 0.6 (2013-01-17): 
+// 0.6 (2013-01-17):
 //	+ added amule support
 //  + added mldonkey support
 //	+ added focus back to main window
 //	+ enhanced switch beetween edit & normal mode
 //  + bugfix: char encoding
-// 0.5 (2013-01-04): 
-//  + added edit mode function 
+// 0.5 (2013-01-04):
+//  + added edit mode function
 //	+ changed height and width settings
 //	+ bugfix on character encoding display
 // 0.4 (2012-12-21): add settings dialog
@@ -57,37 +66,37 @@
 // 0.2 (2012-11-20): fixbug - on '|' char escaped to '%7C'
 // 0.1 (2012-11-18): first version
 // -------------------------------------------------------------------------
-// ==/UserScript==
+
 
 
 // -------------------------------------------------------------------------
-// 								PARAM 
+// 								PARAM
 // -------------------------------------------------------------------------
 // These are the default values. Use the setting dialog to modify the parameters
 
 var DEBUG_MODE = 1;	// Mode debug 0|1
 
 // emule/amule/mldonkey server parameters
-var ed2kDlMethod = 'local';	
+var ed2kDlMethod = 'local';
 	// local: ed2k default application of your system (default)
 	// emule: emule via web url
 	// amule: amule via web url
 	// mldonkey: mldonkey via web url
 	// custom: custom via web url (experimental)
-					
+
 var emuleUrl = 'http://127.0.0.1:4711/'; 	// the adress and port of your emule web server
 var emulePwd = 'something'; // the password to access the emule web server
 var emuleCat = [ {name: 'default', value: '0', select: '1'} ]; // Which emule category to assign 0=all (default)
 
 // Popup parameters
-var popupPos = 'absolute'; // absolute or fixed
-var popupHeight = 200; // max height in pixel of the popup box
-var popupWidth = 640; // max width in pixel of the popup box
+var popupPos = 'fixed'; // absolute or fixed
+var popupHeight = 800; // max height in pixel of the popup box
+var popupWidth = 800; // max width in pixel of the popup box
 
 // edit box parameters
 var editCol = 80; // number of column
-var editRow = 12; // number of line
-var editMaxLength = 4096; // max number of char
+var editRow = 16; // number of line
+var editMaxLength = 16384; // max number of char
 
 
 
@@ -124,8 +133,9 @@ GM_config is distributed under the terms of the GNU Lesser General Public Licens
 // The GM_config constructor
 function GM_configStruct() {
   // call init() if settings were passed to constructor
-  if (arguments.length)
+  if (arguments.length) {
     GM_configInit(this, arguments);
+  }
 }
 
 // This is the initializer function
@@ -364,15 +374,17 @@ GM_configStruct.prototype = {
       // we wait for the iframe to load before we can modify it
       this.frame.addEventListener('load', function(e) {
           var frame = config.frame;
-          var body = frame.contentDocument.getElementsByTagName('body')[0];
+          var doc = frame.contentDocument || frame.contentWindow.document; // Chrome/Tampermonkey: contentDocument can be null
+          var body = doc.getElementsByTagName('body')[0];
           body.id = config.id; // Allows for prefixing styles with "#GM_config"
-          buildConfigWin(body, frame.contentDocument.getElementsByTagName('head')[0]);
+          buildConfigWin(body, doc.getElementsByTagName('head')[0]);
       }, false);
     }
   },
 
   save: function () {
     var fields = this.fields;
+    var id = null;
     for (id in fields)
       if (fields[id].toValue() === null) // invalid value encountered
         return;
@@ -431,7 +443,7 @@ GM_configStruct.prototype = {
       var rval = this.parser(this.getValue(store || this.id, '{}'));
     } catch(e) {
       this.log("GM_config failed to read saved settings!");
-      var rval = {};
+      rval = {};
     }
     return rval;
   },
@@ -822,6 +834,12 @@ var GM_config = new GM_configStruct();
 */
 var eLinks=new Array();
 var eFiles=new Array();
+var eSizes=new Array();
+
+var childWindow = null;
+const waitReady = () => new Promise((resolve) => {
+    childWindow.addEventListener('load', resolve, true);
+});
 
 // add Emule Linker settings dialog to Greasemonkey Menu
 GM_registerMenuCommand('Emule Linker: Settings', setButton, 's');
@@ -834,9 +852,9 @@ GM_registerMenuCommand('Emule Linker: Open Popup', location.reload, 'o');
 scriptConfig();
 
 // if ed2k links, display the popup
-var n = getEd2kLinks(eLinks, eFiles);
+var n = getEd2kLinks(eLinks, eFiles, eSizes);
 if (n>0) {
-	createPopup(eLinks, eFiles);
+	createPopup(eLinks, eFiles, eSizes);
 }
 
 // Add key accelerator shortcuts
@@ -846,20 +864,20 @@ d.addEventListener('keydown', function(e) {
 	if (e.keyCode == 65 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { addButton(); }	// ctl+alt+a
 	if (e.keyCode == 67 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { closeButton(); } // ctl+alt+c
 	if (e.keyCode == 77 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { editButton(); } // ctl+alt+m
-	if (e.keyCode == 79 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { GM_setValue("popup_mode",1); createPopup(eLinks, eFiles); } // ctl+alt+o
+	if (e.keyCode == 79 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { GM_setValue("popup_mode",1); createPopup(eLinks, eFiles, eSizes); } // ctl+alt+o
 	if (e.keyCode == 83 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { setButton(); } // ctl+alt+s
 	if (e.keyCode == 88 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { // ctl+alt+x
 		switch(GM_getValue("popup_mode", 1)) {
 		case 0: // popup closed
 			GM_setValue("popup_mode",1);
-			createPopup(eLinks, eFiles);
+			createPopup(eLinks, eFiles, eSizes);
 			break;
-			
+
 		case 1: // normal mode
 		case 2: // edit mode
 			closeButton();
 			break;
-			
+
 		default:
 			trace("ERROR: popup_mode=" + GM_getValue("popup_mode", 1));
 			alert("Error !!! popup_mode unknown.");
@@ -869,29 +887,29 @@ d.addEventListener('keydown', function(e) {
 	}, false);
 })(document);
 
-// -------------------------------------------------------------------------	
+// -------------------------------------------------------------------------
 /**
 * To trace some text in the console
 * @param txt the text to trace into the console
 */
 function trace(txt) {
-	if (DEBUG_MODE) { 
+	if (DEBUG_MODE) {
 		console.log(txt);
 	}
 }
 
-// -------------------------------------------------------------------------	
+// -------------------------------------------------------------------------
 /**
 * Get ed2k links in the page
 * @param links array to stock the ed2k links
 * @param files array to stock the ed2k file names
 * @return number of ed2k links
 */
-function getEd2kLinks(links, files) {
+function getEd2kLinks(links, files, sizes) {
 	var allLinks, thisLink;
-	var i, lnk;
+	var i, lnk, tlnk;
 	var idx=0; // index of array
-	
+
 	trace("getEd2kLinks()");
 	allLinks = document.evaluate(
 		'//a[@href]',
@@ -899,11 +917,11 @@ function getEd2kLinks(links, files) {
 		null,
 		XPathResult.UNORDERED_NODE_SNAPSHOT_TYPE,
 		null);
-		
+
 	for (i=0; i<allLinks.snapshotLength; i++) {
 		thisLink = allLinks.snapshotItem(i);
 		if(thisLink.href.match(/^ed2k*/)) {
-			
+
 			// to detect if the url encoding has produced ISO Latin or UTF8 encoding.
 			// decodeURIComponent throws an exception on invalid UTF8 sequences.
 			try {
@@ -918,31 +936,48 @@ function getEd2kLinks(links, files) {
 
 			// ingore duplicates links
 			if (links.indexOf(lnk)>=0) {
-				continue; 
+				continue;
 			}
 
 			// store the link
 			links[idx]=lnk;
-			
-			// we retrieve the filename
-			lnk = links[idx].split('|');
+
+			// we split the ed2k link to retrieve the filename and size
+			tlnk = links[idx].split('|');
+
+            // Store the size
+            sizes[idx]=tlnk[3];
+
+            // Check if the filename has been encoded twice
+            if(tlnk[2].search(/%(?:[0-9A-Fa-f]{2})/)>-1) {
+                // Sometimes names are encoded twice. Therefore we do it a second time. It may cause problems with filename using % followed by chars but it should be rare for Comics name.
+                try {
+                    tlnk[2]=decodeURIComponent(tlnk[2]);
+                    lnk = tlnk.join('|');
+                    links[idx]=lnk;
+                }
+                catch (e) {
+                    trace("Error in decoding filename a second time");
+                }
+            }
+
 			// check if the filename doesn't already exist
-			if (files.indexOf(lnk[2])>=0) {
+			if (files.indexOf(tlnk[2])>=0) {
 				// storing the filename with a suffix
-				lnk[2] += ' (' + idx + ')';
-				files[idx]=lnk[2];
-				lnk = lnk.join('|');
+				tlnk[2] += ' (' + idx + ')';
+				files[idx]=tlnk[2];
+				lnk = tlnk.join('|');
 				links[idx]=lnk;
 			}
 			else {
 				// storing the filename
-				files[idx]=lnk[2];
+				files[idx]=tlnk[2];
 			}
 
 			idx++;
 		}
 	}
-	
+
 	trace("getEd2kLinks() ed2k links found: "+links.length);
 	return links.length;
 }
@@ -952,19 +987,22 @@ function getEd2kLinks(links, files) {
 * @param links array filled with ed2k links
 * @param files array filled with ed2k file names
 */
-function createPopup(links, files) {
+function createPopup(links, files, sizes) {
 	var theDiv;		// the popup
 	var divBody;	// The popup body
 	var container; 	// the popup inserted in the page
-	
+
 	trace("createPopup");
 	// First the Div
     theDiv=document.createElement('div');
 	divBody = '<div id="theDiv" style="\
-					position:'+ popupPos + '; \
+                    position:'+ popupPos + '; \
+					top:0; \
+					left:0; \
 					background-color:white; \
 					opacity:0.97; \
 					color:black;\
+                    margin:0;\
 					border:2px solid #00f;\
 					z-index:255;\
 					text-align:left;\
@@ -986,28 +1024,54 @@ function createPopup(links, files) {
 	}
 	divBody += 'overflow:auto"> \
 	<style> \
-		a.ed2k:link       { color: #000000; text-decoration: none } \
-		a.ed2k:visited    { color: #000000; text-decoration: none } \
-		a.ed2k:hover      { color: #0000FF; text-decoration: underline } \
-		a.ed2k:active     { color: #0000FF; text-decoration: underline} \
-		input.bigcheck { \
-			height: 16px; \
-			width: 16px; \
+        div#theDiv button { \
+			font-size:11px;\
 		} \
-		input.smallcheck { \
+        div#theDiv select { \
+			font-size:11px;\
+		} \
+		div#theDiv input.smallcheck { \
 			height: 9px; \
 			width: 9px; \
 			vertical-align:text-bottom;\
 			font-size:10px;\
 			line-height:90%;\
 		} \
+        div#divBody a {font-size: 10px;} \
+		div#divBody a.ed2k:link       { color: #000000; text-decoration: none } \
+		div#divBody a.ed2k:visited    { color: #000000; text-decoration: none } \
+		div#divBody a.ed2k:hover      { color: #0000FF; text-decoration: underline; font-weight: normal } \
+		div#divBody a.ed2k:active     { color: #0000FF; text-decoration: underline; font-weight: normal } \
+		div#divBody input.bigcheck { \
+			height: 16px; \
+			width: 16px; \
+		} \
+        div#divBody table { \
+            all: revert; \
+            margin: 0px auto; \
+            font-size: 10px; \
+            border-collapse: collapse; \
+            width: 100%; \
+        } \
+        div#divBody td { \
+            background: #FFFFFF; padding: 0px 4px;} \
+        } \
+        div#divBody th { \
+            background: #FFFFFF; padding: 0px 4px;} \
+        } \
+        div#divBody tr { \
+            background: #FFFFFF; \
+        } \
+        div#divBody tr:hover td { \
+            background: #e3f0fa; \
+        } \
 	</style> \
 	</div>';
 	theDiv.innerHTML=divBody;
 	document.body.insertBefore(theDiv, document.body.firstChild);
-	
-	var container = document.getElementById ("theDiv");	
-	
+
+	container = document.getElementById ("theDiv");
+
 	// adding the function toolbar at the top
 	addToolbar(container, 0);
 
@@ -1015,31 +1079,31 @@ function createPopup(links, files) {
 	var tmp_link=document.createElement('div');
 	tmp_link.setAttribute('id', 'divBody');
 	tmp_link.style.clear='both';
-	
+
 	trace('createPopup() popup_mode=' + GM_getValue("popup_mode", 1));
 	switch(GM_getValue("popup_mode", 1)) {
 		case 0: // popup closed
 			break;
-			
+
 		case 1: // normal mode
-			tmp_link.innerHTML = htmlLinkList(links, files);
+			tmp_link.innerHTML = htmlLinkList(links, files, sizes);
 			container.appendChild(tmp_link);
 			container.style.resize='both';
 			break;
-			
+
 		case 2: // edit mode
 			container.appendChild(tmp_link);
 			addEditBox(tmp_link, concatLinks(eLinks));
 			container.style.resize='none';
 			container.style.overflow='hidden';
 			break;
-			
+
 		default:
 			trace("ERROR: popup_mode=" + GM_getValue("popup_mode", 1));
 			alert("Error !!! popup_mode unknown.");
 			break;
 	}
-	
+
 	// adding the function toolbar at the bottom
 	addToolbar(container, 1);
 }
@@ -1049,7 +1113,7 @@ function createPopup(links, files) {
 */
 function delPopup() {
 	trace('delPopup()');
-	var theDiv = document.getElementById ("theDiv");	
+	var theDiv = document.getElementById ("theDiv");
 	theDiv.parentNode.removeChild(theDiv);
 }
 
@@ -1059,7 +1123,7 @@ function delPopup() {
 function updatePopup() {
 	trace('updatePopup()');
 	delPopup();
-	createPopup(eLinks, eFiles);
+	createPopup(eLinks, eFiles, eSizes);
 }
 
 /**
@@ -1068,19 +1132,20 @@ function updatePopup() {
 * @param files array
 * @return html list
 */
-function htmlLinkList(links, files) {
+function htmlLinkList(links, files, sizes) {
 	var html="";
 	var lnk = new Array();
-	
+
 	trace('htmlLinkList()');
-	
-	html = '<hr />';
+
+	html = '<hr /><table>';
+
 	for (var i=0; i<links.length; i++) {
 		lnk[0] = links[i];
-		html += '<input class="smallcheck" name="l' + i + '" type="checkbox" id="l' + i + '" tabindex="' + i+1 + '" value="1" checked="checked" /><a class="ed2k" href="' + getAddLink(lnk) + '" target="emule">' + files[i] + '</a><br />';
+		html += '<tr><td><input class="smallcheck" name="l' + i + '" type="checkbox" id="l' + i + '" tabindex="' + i+1 + '" value="1" checked="checked" /></td><td style="white-space:nowrap;"><a class="ed2k" href="' + getAddLink(lnk) + '" target="emule">' + files[i] + '</a></td><td style="min-width:40px;">'+ humanFileSize(sizes[i], false, 0) + '</td></tr>'; //
 	}
-	
-	html += '<hr />';
+
+	html += '</table><hr />';
 	return html;
 }
 
@@ -1089,7 +1154,7 @@ function htmlLinkList(links, files) {
 */
 function concatLinks(links) {
 	var str=""; // string of links
-	
+
 	for (var i=0; i<links.length; i++) {
 		if (i==0) {
 			str=links[i];
@@ -1098,7 +1163,7 @@ function concatLinks(links) {
 			str += '\n' + links[i];
 		}
 	}
-	
+
 	return str;
 }
 
@@ -1108,13 +1173,13 @@ function concatLinks(links) {
 */
 function addToolbar(container, pos) {
 	trace('addToolbar(container, '+ pos +')');
-    
+
 	var divL=document.createElement('div');
 	var divR=document.createElement('div');
 
 	divL.style.cssFloat='left';
 	divR.style.cssFloat='right';
-	
+
 	divL.style.paddingLeft='0px';
 	divL.style.paddingRight='5px';
 	divR.style.paddingLeft='5px';
@@ -1127,7 +1192,7 @@ function addToolbar(container, pos) {
 
 	container.appendChild(divL);
 	container.appendChild(divR);
-	
+
 	// checkbox all
 	var tmp_link=document.createElement('input');
 	tmp_link.type = "checkbox";
@@ -1136,29 +1201,28 @@ function addToolbar(container, pos) {
 	tmp_link.className = 'smallcheck';
 	tmp_link.style.verticalAlign='bottom';
 	if (pos==0) {
-		tmp_link.name = "lall";	
+		tmp_link.name = "lall";
 		tmp_link.id = "checkall";
 		tmp_link.addEventListener('click', function(){ checkButton(); }, false );
 	}
 	else {
-		tmp_link.disabled = true;		
+		tmp_link.disabled = true;
 	}
 
-	divL.appendChild (tmp_link);	
+	divL.appendChild (tmp_link);
 
 	divL.appendChild (document.createTextNode(' '));
-	
+
 	// dynamic add links
-	var tmp_link=document.createElement('button');
+	tmp_link=document.createElement('button');
 	tmp_link.addEventListener('click', function(){ addButton(); }, false );
 	tmp_link.innerHTML = '<u>A</u>dd all links';
-	tmp_link.style.fontSize='11px';
 	divL.appendChild (tmp_link);
-	
+
 	divL.appendChild (document.createTextNode(' '));
-	
+
 	// Edit/Normal mode Link
-	var tmp_link=document.createElement('button');
+	tmp_link=document.createElement('button');
 	tmp_link.addEventListener('click', function(){ editButton(); }, false );
 	switch(GM_getValue("popup_mode", 1)) {
 	case 0:	// popup closed
@@ -1175,9 +1239,8 @@ function addToolbar(container, pos) {
 		break;
 	}
 
-	tmp_link.style.fontSize='11px';
 	divL.appendChild (tmp_link);
-	
+
 	divL.appendChild (document.createTextNode(' '));
 
 	// Category list
@@ -1186,8 +1249,7 @@ function addToolbar(container, pos) {
 		selection.setAttribute('name','Category');
 		selection.id = "cat";
 		selection.style.verticalAlign='bottom';
-		selection.style.fontSize='11px';
-		
+
 		for(var i=0; i < emuleCat.length; i++) {
 			trace('emuleCat['+i+'] => '+emuleCat[i].name+'='+emuleCat[i].value+' ('+emuleCat[i].select+')');
 			var element = new Array()
@@ -1199,30 +1261,28 @@ function addToolbar(container, pos) {
 			}
 			selection.appendChild(element[i]);
 		}
-		
+
 		if(ed2kDlMethod=='local' || ed2kDlMethod=='mldonkey') {
 			selection.disabled = true;
 		}
-		
+
 		selection.addEventListener('change', function(){ changeCat(); }, false );
 		divL.appendChild(selection);
 		divL.appendChild (document.createTextNode(' '));
 	}
 
 	// Configuration Link
-	var tmp_link=document.createElement('button');
+	tmp_link=document.createElement('button');
 	tmp_link.addEventListener('click', function(){ setButton();}, false );
 	tmp_link.innerHTML = '<u>S</u>ettings';
-	tmp_link.style.fontSize='11px';
 	divR.appendChild (tmp_link);
-	
+
 	divR.appendChild (document.createTextNode(' '));
-	
+
 	// Close link
-	var tmp_link=document.createElement('button');
+	tmp_link=document.createElement('button');
 	tmp_link.addEventListener('click', function(){ closeButton(); }, false );
 	tmp_link.innerHTML = '<u>C</u>lose';
-	tmp_link.style.fontSize='11px';
 	divR.appendChild (tmp_link);
 
 }
@@ -1245,7 +1305,7 @@ function addEditBox(container, txt) {
 	container.appendChild (tmp_link);
 //	container.style.resize='none';
 	tmp_link.select();
-	
+
 	if (txt.length >= editMaxLength) {
 		alert("Warning! you need to increase the Max length to something above " +txt.length + " in the settings dialog to display the entire list");
 	}
@@ -1260,47 +1320,6 @@ function delEditBox() {
 }
 
 /**
-* Actions when "Add all links" button is pressed
-*/
-function addButton() {
-	trace("addButton()");
-	var href="";
-	var links=new Array();
-	
-	switch(GM_getValue("popup_mode", 1)) {
-		case 0: // popup closed
-		case 1: // in normal mode
-			links=getSelectLink(eLinks);
-			break;
-		case 2: // in edit mode
-			var txt = document.getElementById("editbox");
-			links=txt.value.split('\n');
-			break;
-		default:
-			trace("ERROR: popup_mode=" + GM_getValue("popup_mode", 1));
-			alert("Error !!! popup_mode unknown.");
-			return;
-	}
-
-	href = getAddLink(links);
-	trace("href="+href);
-	
-	if(ed2kDlMethod=='local') {
-		for (var i=0; i<links.length; i++) {
-			window.location.replace(links[i]);
-		}
-	} else if(ed2kDlMethod=='custom') {
-		post(emuleUrl, href);
-		//silentPost(emuleUrl, "");
-	}
-	else {
-		var e_win = window.open(href, 'emule');
-		e_win.blur();
-	}
-	
-}
-
-/**
 * Actions when "Edit/Reset" button is pressed
 */
 function editButton() {
@@ -1310,13 +1329,13 @@ function editButton() {
 		GM_setValue("popup_mode",2);
 		updatePopup();
 		break;
-		
+
 	case 0: // popup closed
 	case 2: // in edit mode
-		GM_setValue("popup_mode",1); 
+		GM_setValue("popup_mode",1);
 		updatePopup();
 		break;
-		
+
 	default:
 		trace("ERROR: popup_mode=" + GM_getValue("popup_mode", 1));
 		alert("Error !!! popup_mode unknown.");
@@ -1339,7 +1358,7 @@ function setButton() {
 */
 function closeButton() {
 	trace("closeButton()");
-	var candidate=document.getElementById("theDiv"); 
+	var candidate=document.getElementById("theDiv");
 	candidate.parentNode.removeChild(candidate);
 	GM_setValue("popup_mode",0);
 }
@@ -1349,14 +1368,15 @@ function closeButton() {
 */
 function checkButton() {
 	trace("checkButton()");
-	var checkbox=document.getElementById("checkall"); 
+    var i=0;
+	var checkbox=document.getElementById("checkall");
 	if (checkbox.checked==true) {
-		for (var i=0; i<eLinks.length; i++) {
+		for (i=0; i<eLinks.length; i++) {
 			document.getElementById('l'+i).checked=true;
 		}
 	}
 	else {
-		for (var i=0; i<eLinks.length; i++) {
+		for (i=0; i<eLinks.length; i++) {
 			document.getElementById('l'+i).checked=false;
 		}
 	}
@@ -1368,7 +1388,7 @@ function checkButton() {
 function changeCat() {
 	trace("changeCat()");
 
-	var cat=document.getElementById("cat"); 
+	var cat=document.getElementById("cat");
 
 	for (var i=0; i<emuleCat.length; i++) {
 		if(emuleCat[i].value==cat.value) {
@@ -1383,14 +1403,88 @@ function changeCat() {
 
 }
 
-// -------------------------------------------------------------------------	
+/**
+* Actions when "Add all links" button is pressed
+*/
+async function addButton() {
+	trace("addButton()");
+	var href="";
+	var links=new Array();
+
+	switch(GM_getValue("popup_mode", 1)) {
+		case 0: // popup closed
+		case 1: // in normal mode
+			links=getSelectLink(eLinks);
+			break;
+		case 2: // in edit mode
+			var txt = document.getElementById("editbox");
+			links=txt.value.split('\n');
+			break;
+		default:
+			trace("ERROR: popup_mode=" + GM_getValue("popup_mode", 1));
+			alert("Error !!! popup_mode unknown.");
+			return;
+	}
+
+	href = getAddLink(links);
+	trace("href="+href);
+
+	if(ed2kDlMethod=='local') {
+		for (var i=0; i<links.length; i++) {
+			window.location.replace(links[i]);
+		}
+	} else if(ed2kDlMethod=='custom') {
+		post(emuleUrl, href);
+/*	} else if(ed2kDlMethod=='amule') {
+        post(emuleUrl + "footer.php", href);
+
+        // Below won't work for security reasons. Browser will block it
+        /* var url = emuleUrl + "footer.php";
+        var params = href;
+        silentPost(url, params);*/
+	} else if(ed2kDlMethod=='amule') {
+        var a_win = null;
+
+        // This is a tweak to bypass amule login page
+        if(emulePwd != "") {
+            trace("Send password to make sure we are logged in and wait 1 sec... then...");
+            a_win = window.open(emuleUrl + "footer.php?pass=" + emulePwd, 'amule');
+            await sleep(1000); // Should be enough to bypass the login page. We don't want to wait too much to avoid slowing down the sending of links.
+            //loadChildWindow(emuleUrl + "login.php?pass="+ emulePwd +"&submit=Submit", 'amule');
+        }
+        trace("Sending ed2k links to amule");
+        //loadChildWindow(href, 'amule');
+        a_win = window.open(href, 'amule');
+        a_win.blur(); // Deprecated in most recent browsers
+	}
+	else {
+        var e_win = window.open(href, 'emule');
+		e_win.blur(); // Deprecated in most recent browsers
+	}
+}
+
+// Not working
+async function loadChildWindow(href, name) {
+    childWindow = window.open(href, name);
+    await waitReady();
+    console.log("Child Window is Ready..");
+}
+
+/**
+* Wait for x milliseconds
+*/
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// -------------------------------------------------------------------------
 /**
 * Get selected links
 */
 function getSelectLink(links) {
 	var lnk= new Array();
 	var idx=0;
-	
+
 	for (var i=0; i<links.length; i++) {
 		if (document.getElementById('l'+i).checked==true){
 			lnk[idx]=links[i];
@@ -1409,18 +1503,24 @@ function getAddLink(links) {
 	var lnk=""; // string of links
 	var tmp="";
 	var cat="";
-	
+
 	trace('getAddLink('+links+')');
-	
-	var cat = document.getElementById('cat').value;
-	
+
+	cat = document.getElementById('cat').value;
+
 	for (var i=0; i<links.length; i++) {
 		tmp=links[i].split('|');
 
 		// we encode the filename
-		tmp[2]=encodeURIComponent(decodeURIComponent(tmp[2]));
+        try {
+            tmp[2]=encodeURIComponent(decodeURIComponent(tmp[2]));
+        }
+        catch (e) {
+            trace("Error in decoding and re-encoding filename");
+        }
+
 		tmp=tmp.join('|');
-			
+
 		if (i==0) {
 			lnk=tmp;
 		}
@@ -1430,87 +1530,58 @@ function getAddLink(links) {
 	}
 
 
-			
 	switch(ed2kDlMethod) {
 		case 'local':
 			url = links.join('\n');
+		  break;
+
+    case 'emule':
+      // GET method: then we encode the link (so the filename is encoded twice)
+      lnk=encodeURIComponent(lnk);
+      url = emuleUrl + "?w=password&p=" + emulePwd + "&cat=" + cat + "&c=" + lnk;
+		  break;
+
+    case 'amule':
+      if(cat == "0") {
+        cat = "all";
+      }
+
+      // Using Get method: we encode the link (so the filename is encoded twice)
+      lnk=encodeURIComponent(lnk);
+      if(emulePwd != '') {
+          url = emuleUrl + "footer.php?pass=" + emulePwd + "&selectcat=" + cat + "&Submit=Download+link&ed2klink=" + lnk;
+      } else {
+          url = emuleUrl + "footer.php?selectcat=" + cat + "&Submit=Download+link&ed2klink=" + lnk;
+      }
+
+      // Using Post method
+      /*url = new Array();
+      url["selectcat"] = cat;	// the category
+      url["Submit"] = "Download+link";	// Submit
+      url["ed2klink"] = lnk;	// the ed2k links*/
 			break;
-		case 'emule':
-			url = getEmuleLink(lnk, cat);
+
+    case 'mldonkey':
 			// GET method: then we encode the link (so the filename is encoded twice)
-			lnk=encodeURIComponent(lnk);
-			lnk=lnk.replace(/\%257C/gi, '|');
-			lnk=lnk.replace(/\%7C/gi, '|');
+      lnk=encodeURIComponent(lnk);
+      url = emuleUrl + "submit?jvcmd=multidllink&links=" + lnk;
 			break;
-		case 'amule':
-			url = getAmuleLink(lnk, cat);
-			// GET method: then we encode the link (so the filename is encoded twice)
-			lnk=encodeURIComponent(lnk);
-			lnk=lnk.replace(/\%257C/gi, '|');
-			lnk=lnk.replace(/\%7C/gi, '|');
-			break;
-		case 'mldonkey':
-			url = getMLDonkeyLink(lnk);
-			// GET method: then we encode the link (so the filename is encoded twice)
-			lnk=encodeURIComponent(lnk);
-			lnk=lnk.replace(/\%257C/gi, '|');
-			lnk=lnk.replace(/\%7C/gi, '|');
-			break;
-		case 'custom':
+
+    case 'custom':
 			// POST method: no need to encode the link
-			url = getCustomLink(lnk, cat);
+      url = new Array();
+      url["cat"] = cat;	// the category
+      url["ref"] = window.location;	// the post where the links come from
+      url["ed2k"] = lnk;	// the ed2k links
 			break;
-		default:
+
+    default:
 			break;
 	}
 	return url;
 }
 
-/**
-* formatting the URL to add ed2k links to emule
-*/
-function getEmuleLink(links, cat) {
-		
-	// Url to add ed2k links to emule
-	return emuleUrl + "?w=password&p=" + emulePwd + "&cat=" + cat + "&c=" + links;
-}
-
-/**
-* formatting the URL to add ed2k links to amule
-*/
-function getAmuleLink(links, cat) {
-
-	if(cat == "0") {
-		cat = "all";
-	}
-	
-	// Url to add ed2k links to amule
-	return emuleUrl + "footer.php?selectcat=" + cat + "&Submit=Download+link&ed2klink=" + links;
-}
-
-/**
-* formatting the URL to add ed2k links to mlDonkey
-*/
-function getMLDonkeyLink(links) {
-	// Url to add ed2k links to mldonkey
-	return emuleUrl + "submit?jvcmd=multidllink&links=" + links;
-}
-
-/**
-* formatting the URL to add ed2k links to a custom application via a post form
-*/
-function getCustomLink(links, cat) {
-	// Url to add ed2k links to custom application as a post form
-	var params = new Array(); 
-
-	params["cat"] = cat;	// the category
-	params["ref"] = window.location;	// the post where the links come from
-	params["ed2k"] = links;	// the ed2k links
-
-	return params;
-}
-
-// -------------------------------------------------------------------------	
+// -------------------------------------------------------------------------
 /**
 * calling the settings dialog
 */
@@ -1524,9 +1595,13 @@ function resetConfig() {
 */
 function scriptConfig() {
 	trace("scriptConfig() configuring the dialog");
-	
+
+	// Create a div to use as the config window — avoids iframe cross-origin issues in Chrome/Tampermonkey
+	var configDiv = document.createElement('div');
+	document.body.appendChild(configDiv);
+
 	// Configure Settings dialog
-	GM_config.init('Emule Linker Settings dialog', {
+	GM_config.init(configDiv, 'Emule Linker Settings dialog', {
 		'section1' : { section: ['ed2k download mode', 'Please refer to your emule/amule/mldonkey configuration'], label: '', type: 'hidden'},
 		/*'ed2kDlMethod': { label: 'Ed2k Download Method', title: 'local: local application that handle ed2k links (default)\nemule: remote emule (via web frontend)\namule: remote amule (via web frontend)\nmldonkey: remote mldonkey (via web frontend)\ncustom: custom server implementation (experimental)', type:'radio', options:['local','emule','amule','mldonkey','custom'], default: ed2kDlMethod },*/
 		'ed2kDlMethod': { label: 'Ed2k Download Method', title: 'local: local application that handle ed2k links (default)\nemule: remote emule (via web frontend)\namule: remote amule (via web frontend)\nmldonkey: remote mldonkey (via web frontend)\ncustom: custom server implementation (experimental)', type:'select', options:{'local':'your system default','emule':'(remote) emule','amule':'(remote) amule','mldonkey':'(remote) mldonkey','custom':'custom (experimental)'}, default: ed2kDlMethod}, // default value doesn't work with a dropdown menu => see bugfix in the lib
@@ -1541,13 +1616,13 @@ function scriptConfig() {
 		'editCol': { label: 'Number of columns', title : 'number of columns', type: 'radio', type: 'int', default: editCol },
 		'editRow': { label: 'Number of rows', title : 'Number of rows', type: 'int', default: editRow },
 		'editMaxLength': { label: 'MaxLength', title : 'Max number of char in the text area', type: 'int', 'default': editMaxLength },
-		}, 
+		},
 		{
 		//open: function() { GM_config.sections2tabs(); }, // not working (not included into the library)
 		save: function() { location.reload(); } // reload the page when configuration was changed
 		}
 	);
-	
+
 	// invoke the dialog
 	if (GM_getValue("emule_config", 0)<1)
 	{
@@ -1566,7 +1641,7 @@ function scriptConfig() {
 */
 function saveConfig() {
 	var err=0;
-	
+
 	trace("saveConfig() storing the settings");
 
 	ed2kDlMethod = GM_config.get('ed2kDlMethod');
@@ -1634,7 +1709,7 @@ function catToStr(cat) {
 	var str="";
 
 	//trace('catToStr()');
-	
+
 	for (var i=0; i < cat.length; i++) {
 		if (cat[i].select==1) {
 			str +='*';
@@ -1642,7 +1717,7 @@ function catToStr(cat) {
 		str +=cat[i].name+'=';
 		str +=cat[i].value +';';
 	}
-	
+
 	trace('catToStr() -> ' + str);
 	return str;
 }
@@ -1655,9 +1730,10 @@ function strToCat(str) {
 	var tab = new Array();
 	var tmp = new Array();
 	var idx=0;
-	
+    var obj = new Object();
+
 	//trace ('strToCat('+str+')');
-	
+
 	tab = str.split(';');
 	for(var i=0; i<tab.length; i++) {
 		tmp = tab[i].split('=');
@@ -1677,7 +1753,7 @@ function strToCat(str) {
 			//trace('cat['+idx+'] => '+cat[idx].name+'='+cat[idx].value+' ('+cat[idx].select+')');
 			idx++;
 		}
-	
+
 	}
 	trace('strToCat() -> '+ idx +' categories');
 
@@ -1720,23 +1796,44 @@ function post(path, params, method) {
     form.submit();
 }
 
+/*
 function silentGet(url) {
-	if (window.XMLHttpRequest) { req = new XMLHttpRequest(); }
-	else if (window.ActiveXObject) { req = new ActiveXObject("Microsoft.XMLHTTP"); }
-	req.onreadystatechange = function() {silentClose(url, "emule");};
+	var req = new XMLHttpRequest();
+
+	req.onreadystatechange = function() {
+        //silentClose(url, "emule");
+    }
 	req.open("GET", url, true);
 	req.send("");
 }
+*/
 
+/**
+* Submit a post using ajax call
+*
+* This should be a better way to send post forms but new browser doesn't accept silent calls to remote systems
+* If your emule is not using HTTPS, you will have mixed content blocking
+* Even if the remote system is HTTPS, browsers restrict cross-origin HTTP requests initiated from scripts
+*/
 function silentPost(url, params) {
-	if (window.XMLHttpRequest) { req = new XMLHttpRequest(); }
-	else if (window.ActiveXObject) { req = new ActiveXObject("Microsoft.XMLHTTP"); }
-	
-	req.onreadystatechange = function() {silentClose(url, "emule");};
+	var req = new XMLHttpRequest();
+
+    req.onreadystatechange = function() { //Call a function when the state changes.
+
+        //document.getElementById(target).innerHTML = req.responseText;
+        if (req.readyState == 4) {
+            trace("Post sent with response code ["+req.status+"]"); // Données textuelles récupérées
+            if (req.status == 200 || req.status == 0) {
+                alert("OK: "+req.responseText); // Données textuelles récupérées
+            } else {
+                alert("KO: "+req.responseText); // Données textuelles récupérées
+            }
+        }
+	}
 
 	req.open("POST", url, true);
 	req.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
-	
+
 	var data="";
 	for(var key in params) {
         if(params.hasOwnProperty(key)) {
@@ -1750,9 +1847,36 @@ function silentPost(url, params) {
 	req.send(data);
 }
 
-function silentClose(path, params) {
-	//document.getElementById(target).innerHTML = req.responseText;
-	if (req.readyState == 4 && (req.status == 200 || req.status == 0)) {
-		alert("OK: "+req.responseText); // Données textuelles récupérées
-	}
+
+/**
+ * Format bytes as human-readable text.
+ *
+ * @param bytes Number of bytes.
+ * @param si True to use metric (SI) units, aka powers of 1000. False to use
+ *           binary (IEC), aka powers of 1024.
+ * @param dp Number of decimal places to display.
+ *
+ * @return Formatted string.
+ */
+function humanFileSize(bytes, si=false, dp=1) {
+  const thresh = si ? 1000 : 1024;
+
+  if (Math.abs(bytes) < thresh) {
+    return bytes + ' B';
+  }
+
+  const units = si
+    ? ['kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
+    : ['KiB', 'MiB', 'GiB', 'TiB', 'PiB', 'EiB', 'ZiB', 'YiB'];
+  let u = -1;
+  const r = 10**dp;
+
+  do {
+    bytes /= thresh;
+    ++u;
+  } while (Math.round(Math.abs(bytes) * r) / r >= thresh && u < units.length - 1);
+
+
+  return bytes.toFixed(dp) + ' ' + units[u];
 }
+
