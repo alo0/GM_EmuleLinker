@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Many links test page for EmuleLinker</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: #f7f9fa;
+            color: #222;
+        }
+        h1 {
+            text-align: center;
+            margin-top: 0px;
+            font-size: 2.5em;
+            color: #2a4d69;
+        }
+        h2 {
+            color: #4b86b4;
+            border-bottom: 2px solid #bfe2ff;
+            padding-bottom: 5px;
+        }
+        p, ol {
+            max-width: 700px;
+            margin: 0 auto 20px auto;
+            line-height: 1.6;
+        }
+        #links {
+            max-width: 900px;
+            margin: 30px auto;
+            line-height: 1.8;
+        }
+        a {
+            color: #2a4d69;
+            text-decoration: none;
+        }
+        .spacer {
+            height: 200px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Many links test page for EmuleLinker</h1>
+    <div class="spacer"></div>
+    <h2>Summary</h2>
+    <p>This page generates <strong><span id="count"></span></strong> valid ed2k links, to check that the popup
+       displays them all, whatever their number. Add <code>?n=5000</code> to the address to change the number.
+       The automated test suite checks the same on Chrome (see SPECIFICATIONS.md, § 8): this page is for the
+       other browsers, Firefox in particular.</p>
+
+    <h2>What to check</h2>
+    <ol>
+        <li>Normal mode: the popup lists every link. Scroll it down to the last one,
+            <code>many-links-test-file-number-<span class="last"></span>.mp3</code>.</li>
+        <li>Edit mode (<code>Ctrl+Alt+M</code>): the edit box holds every link, one per line, without any alert.
+            Scroll it down to the last link, then type a character at the end: it must appear.</li>
+    </ol>
+    <p><strong>Do not send these links to eMule</strong>: the files do not exist. If you do, cancel them in
+       eMule afterwards.</p>
+
+    <h2>ED2K Links</h2>
+    <div id="links"></div>
+
+    <script>
+        // The links are generated while the page loads, before the userscript runs
+        (function () {
+            var n = parseInt(new URLSearchParams(location.search).get('n'), 10) || 2000;
+            var html = [];
+            for (var i = 1; i <= n; i++) {
+                var num = String(i).padStart(5, '0');
+                var hash = i.toString(16).toUpperCase().padStart(32, '0');     // 32 hexadecimal characters
+                html.push('<a href="ed2k://|file|many-links-test-file-number-' + num + '.mp3|1048576|' +
+                          hash + '|/">' + num + '</a>');
+            }
+            document.getElementById('links').innerHTML = html.join(' ');
+            document.getElementById('count').textContent = n;
+            document.querySelector('.last').textContent = String(n).padStart(5, '0');
+        })();
+    </script>
+</body>
+</html>
