@@ -1,90 +1,42 @@
 // ==UserScript==
 // @name        Emule Linker
 // @namespace   https://github.com/alo0/GM_EmuleLinker
-// @description Add all ED2K links (with one click) into remote emule/amule/mldonkey or any application installed on your system that handles ed2k links
+// @description Finds every ed2k link of a page and sends them in one click to eMule, aMule, MLDonkey, the ed2k application of your system, or your own server
 // @include     *
 // @grant		GM_getValue
 // @grant		GM_setValue
 // @grant		GM_registerMenuCommand
 // @grant 		GM_log
-// @version     0.10
+// @grant 		GM_xmlhttpRequest
+// @connect     *
+// @version     0.11
 // @updateURL       https://raw.githubusercontent.com/alo0/GM_EmuleLinker/master/GM_EmuleLinker.user.js
 // @downloadURL     https://raw.githubusercontent.com/alo0/GM_EmuleLinker/master/GM_EmuleLinker.user.js
 // ==/UserScript==
 // -------------------------------------------------------------------------
 // WHAT IT DOES:
-// The script scans pages for ed2k links. It collects these links
-// and displays them in a (closable) popup box in the upper left
-// hand corner of the page. Then, you can add all of them into emule
-// or separately.
-//
-// This script has been inspired from these scripts below
-// http://userscripts.org/scripts/show/4011
-// http://userscripts.org/scripts/show/11310
+// Finds every ed2k link of the page, even URL-encoded ones (invalid links
+// are ignored), and lists the files with their size in a popup at the top
+// left of the page. Choose the links with the checkboxes, or edit the list
+// as text, pick a category, then send them in one click to:
+//  - the application of your system that handles ed2k links,
+//  - eMule, aMule 2.x or MLDonkey, through their web interface,
+//  - aMule 3.1 and later, through its REST API,
+//  - or your own server.
+// Everything is also available from the Tampermonkey menu and through
+// keyboard shortcuts (Ctrl+Alt+A to send the links).
 // -------------------------------------------------------------------------
 // INSTALLATION
 // 1. install this script in the Tampermonkey extension
-// 2. (optional) to send the links to emule/amule/mldonkey, activate the web interface of this application
+// 2. (optional) to send the links to eMule, aMule or MLDonkey, activate the web interface of this application
 // 3. Navigate to a page with ed2k links
 // => The popup should appear at the upper left
 // 4. Edit the script params using the settings dialog (ctl+alt+s)
 // 5. (optional) restrict the pages where this script is active with the "User includes" of its
 //    Tampermonkey settings: unlike a change of the @include variable, they survive the updates
 // -------------------------------------------------------------------------
-// CHANGELOG
-// 0.10 (2026-10-09)
-//  + Bugfix: a malformed ed2k link no longer stops the detection of the other links of the page
-//  + Bugfix: ed2k links whose scheme is url-encoded (ed2k%3A%2F%2F...) are now detected
-//  + Bugfix: links can be sent with the popup closed (keyboard shortcut or menu)
-//  + Bugfix: local mode works again on recent Chrome (links are url-encoded) and sends every selected link
-//  + Links that are not files (server, serverlist) are now ignored
-//  + Bugfix: an empty or invalid Category setting no longer stops the script on every page
-//  + Categories: invalid entries are skipped and exactly one default is kept, so the category displayed is the one sent
-//  + Settings corrected automatically are now stored, so their alert is no longer shown on every page
-//  + Bugfix: the emule password is optional, as in eMule: no more alert and settings dialog on every page without it
-//  + Bugfix: the popup can no longer be opened twice, and a popup closed on a page stays closed on the next ones
-//  + Bugfix: the "Open Popup" menu entry works, and the shortcuts no longer fail on pages without ed2k links
-//  + Bugfix: changing the category no longer resets the popup (checkboxes, edit box text, size)
-//  + Bugfix: custom method, clicking a file name sends it, instead of opening a copy of the page
-//  + The MaxLength setting of the edit box is removed: the list was never truncated, it only blocked typing
-//  + With many links, only the list scrolls in the popup: both toolbars always stay visible
-//  + Debug traces are off by default, and switched on or off by the new menu entry "Toggle debug traces"
-//  + Known limit: on Chrome, local mode sends one link per user action. To send many links at once, use the emule web server
-//  + The script file is renamed GM_EmuleLinker.user.js, for a one-click install. Existing installations move to it on their own
-// 0.9 (2025-10-29)
-//  + adding password support for amule mode
-//  + adding file size in normal mode
-//  + Checking double encoding of filename
-//  + Enhance the css style of main popup
-//  + Default settings changed as screen resolution are getting bigger
-//  + Bugfix: Encoding of newline was necessary for some ed2k links
-//  + Code refactoring and cleaning
-// 0.8 (2018-11-11)
-//	+ Bugfix: Now detect which method to use to decode URL : first decodeURIComponent() then unescape()
-//  + Custom link is now using a post method and ending by a / is not mandatory in this case
-// 0.7 (2013-01-27)
-//  + Local appli ed2k handler support
-//  + Checkbox filter
-//  + Category selector
-//  + Remove duplicate links check
-//  + Add suffix to identical filename (but with different links)
-//  + Key accelerator support (ctrl+alt+...  m, a, c, o, s, x)
-//  + Bugfix: URL style was applying to the whole page
-//	+ GM_config.js is now integrated into this script (for quick bugfix inside the lib)
-// 0.6 (2013-01-17):
-//	+ added amule support
-//  + added mldonkey support
-//	+ added focus back to main window
-//	+ enhanced switch beetween edit & normal mode
-//  + bugfix: char encoding
-// 0.5 (2013-01-04):
-//  + added edit mode function
-//	+ changed height and width settings
-//	+ bugfix on character encoding display
-// 0.4 (2012-12-21): add settings dialog
-// 0.3 (2012-12-20): script renamed and uploaded to userscripts.org
-// 0.2 (2012-11-20): fixbug - on '|' char escaped to '%7C'
-// 0.1 (2012-11-18): first version
+// CHANGELOG: see CHANGELOG.md
+// https://github.com/alo0/GM_EmuleLinker/blob/master/CHANGELOG.md
 // -------------------------------------------------------------------------
 
 
@@ -102,9 +54,10 @@ var DEBUG_MODE = GM_getValue('debug_mode', 0);
 var ed2kDlMethod = 'local';
 	// local: ed2k default application of your system (default)
 	// emule: emule via web url
+	// amuleapi: aMule 3.1 and later via its REST API
 	// amule: amule via web url
 	// mldonkey: mldonkey via web url
-	// custom: custom via web url (experimental)
+	// custom: custom via web url
 
 var emuleUrl = 'http://127.0.0.1:4711/'; 	// the adress and port of your emule web server
 var emulePwd = ''; // the password to access the emule web server (optional)
@@ -118,6 +71,11 @@ var popupWidth = 800; // max width in pixel of the popup box
 // edit box parameters
 var editCol = 80; // number of column
 var editRow = 16; // number of line
+
+// The GitHub repository of the script, linked from the bottom of the settings dialog: its issues, to
+// report a problem, and the repository itself. If it moves, change also @updateURL and @downloadURL
+// in the header, but never @namespace: it identifies the installed script (a new one would be added).
+var REPOSITORY = 'https://github.com/alo0/GM_EmuleLinker';
 
 
 
@@ -358,7 +316,8 @@ GM_configStruct.prototype = {
 
       body.appendChild(bodyWrapper); // Paint everything to window at once
       config.center(); // Show and center iframe
-      window.addEventListener('resize', config.center, false); // Center frame on resize
+      // Center frame on resize, while it is open (passed alone, center lost its "this" and failed)
+      window.addEventListener('resize', function () { if (config.isOpen) config.center(); }, false);
 
       // Call the open() callback function
       config.onOpen(config.frame.contentDocument || config.frame.ownerDocument,
@@ -857,10 +816,122 @@ var eLinks=new Array();
 var eFiles=new Array();
 var eSizes=new Array();
 
-var childWindow = null;
-const waitReady = () => new Promise((resolve) => {
-    childWindow.addEventListener('load', resolve, true);
-});
+var amuleApiBusy = false;	// a sending to aMule waits for its answer, see setSending()
+var statusTimer = null;		// animation of the "Please wait" message, see showStatus()
+
+// Settings dialog, see settingsDialogOpened()
+// Same colors as the popup (steel blue border, white, light blue). The rows are a grid: label, field,
+// then the help of the row under the field, all the helps being shown or hidden together by the
+// Help button of the title (not on mouse over: the fields would move under the mouse). The width
+// and height set inline by GM_config are overridden.
+// The dialog is anchored at the top of the window, centered in width, and never higher than the
+// window: it scrolls inside, so that its bottom (Save) is always reachable, even in a low window.
+// Its width follows the screen: half of the window, between 640 and 960 px (95 % at most, set by GM_config).
+var SETTINGS_CSS = "#GM_config { width: clamp(640px, 50vw, 960px) !important; height: auto !important; max-height: calc(100% - 20px) !important;"
+	+ " top: 10px !important; left: 0 !important; right: 0 !important; margin: 0 auto !important; overflow-y: auto !important;"
+	+ " border: 2px solid #2b5c8a !important; box-shadow: 0 6px 24px rgba(0,0,0,.35); border-radius: 4px; }"
+	+ "\n#GM_config * { font-family: Arial, Tahoma, sans-serif; }"
+	+ "\n#GM_config_wrapper { padding: 0 0 6px; }"
+	+ "\n#GM_config .config_header { font-size: 15px; font-weight: bold; padding: 10px 14px; text-align: left;"
+	+ " border-bottom: 1px solid #ccd; display: flex; justify-content: space-between; align-items: center; }"
+	+ "\n#GM_config .helpbtn { font-size: 12px; font-weight: normal; padding: 3px 10px; }"
+	+ "\n#GM_config .section_header_holder { margin: 10px 14px 0; }"
+	+ "\n#GM_config .section_header { background: #e4eef7; color: #2b5c8a; border: none; border-left: 4px solid #2b5c8a;"
+	+ " font-size: 13px; font-weight: bold; padding: 4px 8px; text-align: left; }"
+	+ "\n#GM_config .section_desc { background: none; border: none; color: #555; text-align: left;"
+	+ " margin: 3px 0 4px 12px; }"
+	+ "\n#GM_config .config_var { display: grid; grid-template-columns: 170px auto 1fr; align-items: center;"
+	+ " column-gap: 8px; margin: 0; padding: 4px 6px; }"
+	+ "\n#GM_config .config_var:hover, #GM_config .config_var:focus-within { background: #f3f8fd; }"
+	+ "\n#GM_config .field_label { font-size: 12px; font-weight: bold; text-align: right; margin: 0; }"
+	+ "\n#GM_config .config_var span { font-size: 12px; }"
+	+ "\n#GM_config input[type=text], #GM_config input[type=password], #GM_config select { font-size: 12px;"
+	+ " padding: 3px 5px; border: 1px solid #99a; border-radius: 3px; }"
+	+ "\n#GM_config input:focus, #GM_config select:focus { outline: 2px solid #00f; outline-offset: 0; }"
+	// the long values (address, categories) take the whole width of the column, as their help
+	+ "\n#GM_config #GM_config_field_emuleUrl, #GM_config #GM_config_field_emuleCat { grid-column: 2 / -1;"
+	+ " width: 100%; box-sizing: border-box; }"
+	+ "\n#GM_config .pwdbox { grid-column: 2 / -1; display: flex; column-gap: 8px; }"	// password and its Show button
+	+ "\n#GM_config .pwdbox input { flex: 1; min-width: 0; }"
+	+ "\n#GM_config .reveal { justify-self: start; font-size: 11px; padding: 2px 8px; }"
+	+ "\n#GM_config .help { display: none; grid-column: 2 / -1; font-size: 11px; color: #123; white-space: pre-line;"
+	+ " background: #e4eef7; border-left: 3px solid #2b5c8a; padding: 5px 8px; margin: 4px 0 2px; }"
+	+ "\n#GM_config.helps .help { display: block; }"		// all the helps shown by the Help button
+	+ "\n#GM_config .error { grid-column: 2 / -1; font-size: 11px; font-weight: bold; color: #c00; margin: 3px 0 0; }"
+	+ "\n#GM_config input.invalid { border-color: #c00; outline: 1px solid #c00; }"
+	+ "\n#GM_config_buttons_holder { margin: 8px 14px 0; border-top: 1px solid #ccd; padding-top: 6px;"
+	+ " display: flex; flex-wrap: wrap; align-items: center; }"
+	+ "\n#GM_config .saveclose_buttons { margin: 4px 0 4px 8px; padding: 4px 16px; }"
+	+ "\n#GM_config .reset_holder { display: none; }"		// replaced by the Reset button, see addResetButton()
+	// the links to the repository, at the bottom (see addFooter())
+	+ "\n#GM_config .footer { margin: 4px 14px 0; padding: 6px 0 2px; border-top: 1px solid #e3e8ef; font-size: 11px;"
+	+ " display: flex; justify-content: space-between; }"
+	+ "\n#GM_config .footer a { color: #2b5c8a; text-decoration: none; }"
+	+ "\n#GM_config .footer a:hover { text-decoration: underline; }"
+	+ "\n#GM_config .resetbtn { margin-right: auto; font-size: 12px; padding: 4px 12px; }"
+	+ "\n#GM_config .notice { flex-basis: 100%; order: 3; font-size: 11px; color: #123; text-align: left;"
+	+ " background: #fff8e1; border-left: 3px solid #f0a000; padding: 5px 8px; margin: 6px 0 0;"
+	+ " display: flex; align-items: center; column-gap: 8px; }"
+	// its Undo button: the style of Show, always on the right of the notice whatever the length of its text
+	+ "\n#GM_config .notice button { font-size: 11px; margin: 0 0 0 auto; padding: 2px 8px; white-space: nowrap; }"
+	+ "\n#GM_config .config_var.changed { background: #fff8e1; }"
+	+ "\n#GM_config .config_var.changed .field_label::after { content: ' \\2022'; color: #f0a000; }"
+	// the servers as a list (see setupServers()): the select of GM_config stays hidden
+	+ "\n#GM_config #GM_config_ed2kDlMethod_var { grid-template-columns: 1fr; }"
+	+ "\n#GM_config #GM_config_ed2kDlMethod_var > label, #GM_config #GM_config_ed2kDlMethod_var > select { display: none; }"
+	+ "\n#GM_config #GM_config_ed2kDlMethod_var > .help, #GM_config #GM_config_ed2kDlMethod_var > .error { grid-column: 1 / -1; }"
+	+ "\n#GM_config .slist { border: 1px solid #b8c6d6; border-radius: 4px; }"
+	+ "\n#GM_config .srow { display: grid; grid-template-columns: 26px 150px 150px 1fr auto; align-items: center;"
+	+ " column-gap: 6px; padding: 5px 8px; border-top: 1px solid #e3e8ef; font-size: 12px; }"
+	+ "\n#GM_config .srow:first-child { border-top: none; }"
+	+ "\n#GM_config .srow.sel { background: #e4eef7; }"
+	+ "\n#GM_config .srow label { font-weight: bold; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }"
+	+ "\n#GM_config .srow .method { color: #2b5c8a; font-size: 11px; background: #eef3f9; border: 1px solid #c9d6e6;"
+	+ " border-radius: 10px; padding: 1px 7px; justify-self: start; white-space: nowrap;"
+	+ " max-width: 100%; box-sizing: border-box; overflow: hidden; text-overflow: ellipsis; }"	// a long name cut by "..."
+	// a deleted server, in its place; its Undo on the right edge of the fields and their buttons (Show)
+	+ "\n#GM_config .slist .notice { margin: 0; border-top: 1px solid #e3e8ef; padding-right: 6px; }"
+	+ "\n#GM_config .srow .sum { color: #555; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }"
+	+ "\n#GM_config .srow .sum.none { color: #999; font-style: italic; }"
+	+ "\n#GM_config .srow .acts button { background: none; border: none; color: #2b5c8a; font-size: 11px;"
+	+ " text-decoration: underline; cursor: pointer; padding: 0 2px; margin-left: 6px; }"
+	+ "\n#GM_config .srow .acts button.del { color: #a33; }"
+	+ "\n#GM_config .sfields { background: #f7f9fc; border-top: 1px solid #e3e8ef; padding: 4px 0 6px; }"
+	+ "\n#GM_config .sadd { border-top: 1px solid #e3e8ef; padding: 6px 8px; }"
+	+ "\n#GM_config .sadd button { font-size: 12px; padding: 3px 10px; }"
+	+ "\n#GM_config #GM_config_field_serverName { grid-column: 2 / -1; width: 100%; box-sizing: border-box; }"
+	// Test and Import (amuleapi only, see addApiButtons()): the style of Show. Import and the Undo of an
+	// import share a column on the right of the Category field and of the result of the import.
+	+ "\n#GM_config .apibtn { font-size: 11px; padding: 2px 8px; white-space: nowrap; }"
+	+ "\n#GM_config .sfields.noapi .apibtn { display: none; }"
+	+ "\n#GM_config .catbox { grid-column: 2 / -1; display: grid; grid-template-columns: 1fr auto; column-gap: 8px;"
+	+ " row-gap: 4px; align-items: center; }"
+	+ "\n#GM_config .sfields.noapi .catbox { grid-template-columns: 1fr; }"
+	+ "\n#GM_config .catbox #GM_config_field_emuleCat { grid-column: 1; min-width: 0; }"
+	+ "\n#GM_config #GM_config_emuleCat_var > .field_label { align-self: start; margin-top: 4px; }"
+	// their result, under the field: green, orange (connected, but the links would be refused) or red
+	+ "\n#GM_config .apistatus { grid-column: 2 / -1; font-size: 11px; margin: 4px 0 0; padding: 3px 8px; border-radius: 3px; }"
+	+ "\n#GM_config .catbox .apistatus { grid-column: 1; margin: 0; align-self: stretch; }"
+	+ "\n#GM_config .catbox .apistatus.wide { grid-column: 1 / -1; }"
+	+ "\n#GM_config .apistatus.ok { color: #1d6b2a; background: #e8f5ea; border-left: 3px solid #2e8b3d; }"
+	+ "\n#GM_config .apistatus.warn { color: #7a4b00; background: #fff4e0; border-left: 3px solid #f0a000; }"
+	+ "\n#GM_config .apistatus.ko { color: #a00; background: #fdecec; border-left: 3px solid #c00; }";
+
+// The fields that each download method uses: only them are shown in the settings of a server
+var METHOD_FIELDS = {
+	'local': [],
+	'emule': ['emuleUrl', 'emulePwd', 'emuleCat'],
+	'amuleapi': ['emuleUrl', 'emulePwd', 'emuleCat'],
+	'amule': ['emuleUrl', 'emulePwd', 'emuleCat'],
+	'mldonkey': ['emuleUrl'],
+	'custom': ['emuleUrl', 'emuleCat']
+};
+var METHOD_SETTINGS = ['emuleUrl', 'emulePwd', 'emuleCat'];	// the settings of a server, besides its name and method
+var dialogServers = null;	// in the settings dialog: {active: id or null for Local, list: [{id, name, method, emuleUrl, emulePwd, emuleCat}]}
+var dialogEdited = null;	// in the settings dialog: the id of the server whose settings are displayed, or null
+var CATEGORY_ERROR = 'No valid category: write them as name=value, separated by ; (e.g. *default=0;Video=2)';
+var SERVER_URL = /^https?:\/\/[^\/\s]+/i;	// the Server URL of every method: http or https only
+var SERVER_URL_ERROR = 'An address starting with http:// or https:// is expected, e.g. http://127.0.0.1:4711/';
 
 // add Emule Linker settings dialog to Greasemonkey Menu
 GM_registerMenuCommand('Emule Linker: Settings', setButton, 's');
@@ -1104,7 +1175,7 @@ function createPopup(links, files, sizes) {
 					opacity:0.97; \
 					color:black;\
                     margin:0;\
-					border:2px solid #00f;\
+					border:2px solid #2b5c8a;\
 					z-index:255;\
 					text-align:left;\
 					font-size:10px;\
@@ -1189,14 +1260,14 @@ function createPopup(links, files, sizes) {
 			container.appendChild(tmp_link);
 			container.style.resize='both';
 			// a column: top toolbar, list, bottom toolbar. Only the list scrolls, the
-			// toolbars always stay visible, whatever the number of links (A-15)
+			// toolbars always stay visible, whatever the number of links (SF-2.9)
 			container.style.display='flex';
 			container.style.flexDirection='column';
 			container.style.overflow='hidden';
 			tmp_link.style.flex='1 1 auto';
 			tmp_link.style.minHeight='0';
 			tmp_link.style.overflow='auto';
-			// custom method: a click on a file name sends it with a POST form (A-14)
+			// custom method: a click on a file name sends it with a POST form (SF-3.3)
 			tmp_link.addEventListener('click', clickOneLink, false);
 			break;
 
@@ -1300,7 +1371,7 @@ function addToolbar(container, pos) {
 	divR.style.paddingTop='2px';
 
 	// the two halves are grouped in one block, so that the toolbar can stay in place
-	// while the list of links scrolls (A-15)
+	// while the list of links scrolls (SF-2.9)
 	var bar=document.createElement('div');
 	bar.className = 'toolbar';
 	bar.style.display = 'flow-root';	// holds its two floating halves
@@ -1335,6 +1406,8 @@ function addToolbar(container, pos) {
 	tmp_link=document.createElement('button');
 	tmp_link.addEventListener('click', function(){ addButton(); }, false );
 	tmp_link.innerHTML = '<u>A</u>dd all links';
+	tmp_link.className = 'emlAdd';	// disabled while a sending waits for its answer (setSending())
+	tmp_link.disabled = amuleApiBusy;
 	divL.appendChild (tmp_link);
 
 	divL.appendChild (document.createTextNode(' '));
@@ -1551,7 +1624,7 @@ function changeCat() {
 /**
 * Update the URL of the file name links of the popup after a category change
 * Only these links depend on the category (getAddLink()): the popup is not rebuilt, so
-* that the checkboxes, the edit box, the size and the scroll of the popup are kept (A-7).
+* that the checkboxes, the edit box, the size and the scroll of the popup are kept (SF-6.8).
 */
 function refreshLinkUrls() {
 	var anchors = document.querySelectorAll('#divBody a.ed2k');
@@ -1562,30 +1635,37 @@ function refreshLinkUrls() {
 
 /**
 * The href of a file name link of the popup
-* For the custom method the links are sent with a POST form, which a link cannot do: the
-* href is then the ed2k link itself (shown on hover, copied by "Copy link"), and a click on
-* it is turned into the POST by clickOneLink() (A-14).
+* For the custom method the links are sent with a POST form, and for the amuleapi method
+* with a JSON request, which a link cannot do: the href is then the ed2k link itself (shown
+* on hover, copied by "Copy link"), and a click on it is turned into the sending by
+* clickOneLink() (SF-3.3).
 * @param link the ed2k link
 * @return the href of its link in the popup
 */
 function linkHref(link) {
-	return ed2kDlMethod == 'custom' ? encodeEd2kLink(link) : getAddLink([link]);
+	return (ed2kDlMethod == 'custom' || ed2kDlMethod == 'amuleapi') ? encodeEd2kLink(link) : getAddLink([link]);
 }
 
 /**
-* A click on a file name of the popup, with the custom method: the link cannot send the
-* POST form itself, this sends it for this file only. The other methods: nothing to do,
-* the link does the job.
+* A click on a file name of the popup, with the custom or amuleapi method: the link cannot
+* send the request itself, this sends it for this file only. The other methods: nothing to
+* do, the link does the job.
 * @param e the click event, caught on the list of links
 */
 function clickOneLink(e) {
 	var a = e.target.closest('a.ed2k');
-	if (!a || ed2kDlMethod != 'custom') {
+	if (!a || (ed2kDlMethod != 'custom' && ed2kDlMethod != 'amuleapi')) {
 		return;
 	}
 	e.preventDefault();
 	var anchors = document.querySelectorAll('#divBody a.ed2k');
-	post(emuleUrl, getAddLink([eLinks[[].indexOf.call(anchors, a)]]));
+	var href = getAddLink([eLinks[[].indexOf.call(anchors, a)]]);
+	if (ed2kDlMethod == 'amuleapi') {
+		sendToAmuleApi(href);
+	}
+	else {
+		post(emuleUrl, href);
+	}
 }
 
 /**
@@ -1632,13 +1712,8 @@ async function addButton() {
 		}
 	} else if(ed2kDlMethod=='custom') {
 		post(emuleUrl, href);
-/*	} else if(ed2kDlMethod=='amule') {
-        post(emuleUrl + "footer.php", href);
-
-        // Below won't work for security reasons. Browser will block it
-        /* var url = emuleUrl + "footer.php";
-        var params = href;
-        silentPost(url, params);*/
+	} else if(ed2kDlMethod=='amuleapi') {
+		sendToAmuleApi(href);
 	} else if(ed2kDlMethod=='amule') {
         var a_win = null;
 
@@ -1647,10 +1722,8 @@ async function addButton() {
             trace("Send password to make sure we are logged in and wait 1 sec... then...");
             a_win = window.open(emuleUrl + "footer.php?pass=" + emulePwd, 'amule');
             await sleep(1000); // Should be enough to bypass the login page. We don't want to wait too much to avoid slowing down the sending of links.
-            //loadChildWindow(emuleUrl + "login.php?pass="+ emulePwd +"&submit=Submit", 'amule');
         }
         trace("Sending ed2k links to amule");
-        //loadChildWindow(href, 'amule');
         a_win = window.open(href, 'amule');
         a_win.blur(); // Deprecated in most recent browsers
 	}
@@ -1694,7 +1767,7 @@ function encodeEd2kLink(lnk) {
 * Hand one ed2k link to the application registered for the ed2k: scheme
 * The link has to be percent encoded by ourselves (see encodeEd2kLink()): recent
 * Chrome versions silently turn a raw link into about:blank instead of encoding
-* it (older ones did it on their own, see the 0.2 changelog entry).
+* it (older ones did it on their own, see 0.2 in CHANGELOG.md).
 * We go through a synthetic anchor click and not location.replace(): the latter
 * rejects the link outright, and it would replace the document, so only the last
 * link of a batch would ever be sent.
@@ -1709,11 +1782,227 @@ function openLocalLink(lnk) {
 	a.parentNode.removeChild(a);
 }
 
-// Not working
-async function loadChildWindow(href, name) {
-    childWindow = window.open(href, name);
-    await waitReady();
-    console.log("Child Window is Ready..");
+/**
+* Send ed2k links to aMule 3.1 and later, through its REST API (amuleapi)
+* The API needs a JSON POST and a bearer token, which neither a window nor a form can
+* send, and a fetch() from the page is blocked by the browser (CORS): the requests go
+* through GM_xmlhttpRequest. A session is opened for this sending only and closed after
+* it: the token is never stored. The password travels in a request body, never in a url.
+* @param body the request body made by getAddLink(): {links: [...], category_index: n}
+*/
+async function sendToAmuleApi(body) {
+	var api = emuleUrl + 'api/v1/';
+	var token = null;
+	var r;
+
+	if (amuleApiBusy) {
+		// a sending is waiting for its answer: the same links would be sent twice
+		trace('sendToAmuleApi() a sending is already in progress, ignored');
+		return;
+	}
+	if (body.links.length == 0) {
+		showStatus('No ed2k link to send', false);
+		return;
+	}
+	trace('sendToAmuleApi() ' + body.links.length + ' link(s), category ' + body.category_index);
+	setSending(true);
+	showStatus('Please wait', null);	// until the answer of aMule replaces it
+	try {
+		r = await gmRequest('POST', api + 'auth/login?include_token=true', {password: emulePwd});
+		if (r.status != 200 || r.json == null || !r.json.token) {
+			showStatus(amuleApiError(r), false);
+			return;
+		}
+		token = r.json.token;
+		r = await gmRequest('POST', api + 'downloads', body, token, amuleApiTimeout(body.links.length));
+		showStatus(amuleApiResult(body.links, r), r.status == 202);
+	}
+	catch (e) {
+		trace('sendToAmuleApi() ' + e);
+		if (e.timeout) {
+			// aMule received the request but answers late: the links may well be added
+			showStatus('aMule has not answered within ' + Math.round(e.timeout / 1000) + ' s: the links may still be added, check aMule', false);
+		}
+		else {
+			showStatus('aMule can not be reached at ' + emuleUrl, false);
+		}
+	}
+	finally {
+		setSending(false);
+		if (token != null) {
+			gmRequest('POST', api + 'auth/logout', null, token).catch(function () {});
+		}
+	}
+}
+
+/**
+* Mark a sending to aMule as in progress or finished
+* While it waits for its answer, the "Add all links" buttons are disabled, and
+* sendToAmuleApi() ignores any other sending (shortcut, click on a file name).
+* @param busy true when the sending starts, false when its answer has arrived
+*/
+function setSending(busy) {
+	var buttons = document.querySelectorAll('#theDiv button.emlAdd');
+
+	amuleApiBusy = busy;
+	for (var i=0; i<buttons.length; i++) {
+		buttons[i].disabled = busy;
+	}
+}
+
+/**
+* How long to wait for the answer of aMule to a sending
+* aMule answers only once every link is added, and its time grows faster than the number
+* of links: measured on aMule 3.1.0, 8 s for 500 links, 77 s for 2,000 links.
+* @param count the number of links sent
+* @return the time limit in milliseconds: 60 s, plus 100 ms per link
+*/
+function amuleApiTimeout(count) {
+	return 60000 + 100 * count;
+}
+
+/**
+* A JSON request through GM_xmlhttpRequest, which is not subject to CORS
+* @param method the http method
+* @param url the full url
+* @param body the object to send as JSON, or null
+* @param token the bearer token, or null
+* @param timeout the time limit in milliseconds (15 s when not given)
+* @return a promise of {status, json, retryAfter}, rejected when the server can not be
+* reached, or with an error whose timeout property is set when it did not answer in time
+*/
+function gmRequest(method, url, body, token, timeout) {
+	timeout = timeout || 15000;
+	return new Promise(function (resolve, reject) {
+		var headers = {'Accept': 'application/json'};
+		if (body != null) {
+			headers['Content-Type'] = 'application/json';
+		}
+		if (token != null) {
+			headers['Authorization'] = 'Bearer ' + token;
+		}
+		GM_xmlhttpRequest({
+			method: method,
+			url: url,
+			headers: headers,
+			data: body == null ? undefined : JSON.stringify(body),
+			timeout: timeout,
+			onload: function (res) {
+				var json = null;
+				var retry = /^retry-after:\s*(\S+)/im.exec(res.responseHeaders || '');
+				try {
+					json = JSON.parse(res.responseText);
+				}
+				catch (e) {
+					// not a JSON answer: only the status is used
+				}
+				resolve({status: res.status, json: json, retryAfter: retry ? retry[1] : null});
+			},
+			onerror: function () { reject(new Error('network error')); },
+			ontimeout: function () {
+				var e = new Error('no answer within ' + timeout + ' ms');
+				e.timeout = timeout;
+				reject(e);
+			}
+		});
+	});
+}
+
+/**
+* The message for an error answer of the aMule API
+* @param r the answer, from gmRequest()
+* @param url the address of aMule (the setting when not given; the one typed in the settings
+* dialog for Test and Import)
+* @return the message shown to the user
+*/
+function amuleApiError(r, url) {
+	var detail = (r.json && r.json.error && r.json.error.message) ? ' (' + r.json.error.message + ')' : '';
+	switch (r.status) {
+		case 401:
+			return 'aMule refused the password';
+		case 403:
+			return 'This password can not add downloads: the admin password of aMule is needed';
+		case 200:	// a page, not the answer of the API: an older aMule, or another server
+		case 404:
+			return 'No aMule API at ' + (url || emuleUrl) + ' (aMule 3.1 or later is needed)';
+		case 429:
+			return 'Too many failed logins to aMule' + (r.retryAfter ? ', retry in ' + r.retryAfter + ' s' : '');
+		case 503:
+			return 'aMule is not connected to its core (amuled)';
+		default:
+			return 'aMule answered HTTP ' + r.status + detail;
+	}
+}
+
+/**
+* The message for the answer of aMule to a sending
+* @param links the links sent
+* @param r the answer, from gmRequest(): 202 all added, 207 some refused
+* @return the message shown to the user
+*/
+function amuleApiResult(links, r) {
+	var results = (r.json && r.json.results) ? r.json.results : [];
+	var refused = results.filter(function (x) { return !x.ok; });
+	var why = '';
+
+	if (r.status == 202) {
+		return links.length + ' link(s) added to aMule';
+	}
+	if (r.status == 207) {
+		if (refused.length > 0 && refused[0].error && refused[0].error.message) {
+			why = ': ' + refused[0].error.message;
+		}
+		return (links.length - refused.length) + ' link(s) added to aMule, ' + refused.length + ' refused' + why;
+	}
+	return amuleApiError(r);
+}
+
+/**
+* Show the result of a sending to the user
+* In the popup, a line under the top toolbar. With the popup closed there is nowhere to
+* show it: only the errors are then shown, in an alert, so that a failure is never silent.
+* While waiting (ok = null), the message is followed by animated dots, until the next
+* message replaces it.
+* @param msg the message
+* @param ok true for a success, false for an error, null while waiting
+*/
+function showStatus(msg, ok) {
+	var container = document.getElementById('theDiv');
+	var line = document.getElementById('emlStatus');
+	var bar;
+	var dots = 0;
+
+	trace('showStatus() ' + msg);
+	if (statusTimer != null) {
+		clearInterval(statusTimer);
+		statusTimer = null;
+	}
+	if (container == null) {
+		if (ok === false) {
+			alert('Emule Linker: ' + msg);
+		}
+		return;
+	}
+	if (line == null) {
+		line = document.createElement('div');
+		line.id = 'emlStatus';
+		line.style.flex = 'none';		// never shrunk in the popup column
+		line.style.padding = '2px 0';
+		line.style.fontWeight = 'bold';
+		bar = container.querySelector('.toolbar');
+		container.insertBefore(line, bar ? bar.nextSibling : container.firstChild);
+	}
+	if (ok == null) {
+		line.style.color = '#555';
+		line.textContent = msg + '...';
+		statusTimer = setInterval(function () {
+			dots = (dots + 1) % 4;
+			line.textContent = msg + '.'.repeat(dots);
+		}, 400);
+		return;
+	}
+	line.style.color = ok ? '#060' : '#c00';
+	line.textContent = msg;
 }
 
 /**
@@ -1828,6 +2117,17 @@ function getAddLink(links) {
       url["ed2klink"] = lnk;	// the ed2k links*/
 			break;
 
+    case 'amuleapi':
+      // JSON POST (sendToAmuleApi()): the links are not in a url, so they are not encoded a
+      // second time. Lines that are not ed2k links (empty lines of the edit box) are left out:
+      // the API would refuse the whole request
+      url = {
+        links: lnk.split('\n').map(function (l) { return l.trim(); })
+                  .filter(function (l) { return /^ed2k:\/\//i.test(l); }),
+        category_index: parseInt(cat, 10) || 0
+      };
+      break;
+
     case 'mldonkey':
 			// GET method: then we encode the link (so the filename is encoded twice)
       lnk=encodeURIComponent(lnk);
@@ -1867,25 +2167,27 @@ function scriptConfig() {
 	var configDiv = document.createElement('div');
 	document.body.appendChild(configDiv);
 
-	// Configure Settings dialog
-	GM_config.init(configDiv, 'Emule Linker Settings dialog', {
-		'section1' : { section: ['ed2k download mode', 'Please refer to your emule/amule/mldonkey configuration'], label: '', type: 'hidden'},
-		/*'ed2kDlMethod': { label: 'Ed2k Download Method', title: 'local: local application that handle ed2k links (default)\nemule: remote emule (via web frontend)\namule: remote amule (via web frontend)\nmldonkey: remote mldonkey (via web frontend)\ncustom: custom server implementation (experimental)', type:'radio', options:['local','emule','amule','mldonkey','custom'], default: ed2kDlMethod },*/
-		'ed2kDlMethod': { label: 'Ed2k Download Method', title: 'local: local application that handle ed2k links (default)\nemule: remote emule (via web frontend)\namule: remote amule (via web frontend)\nmldonkey: remote mldonkey (via web frontend)\ncustom: custom server implementation (experimental)', type:'select', options:{'local':'your system default','emule':'(remote) emule','amule':'(remote) amule','mldonkey':'(remote) mldonkey','custom':'custom (experimental)'}, default: ed2kDlMethod}, // default value doesn't work with a dropdown menu => see bugfix in the lib
-		'emuleUrl': { label: 'Emule Url', title : 'The complete url of your emule web server ending by a / (example: http://127.0.0.1:4711/)', type: 'text', default: emuleUrl },
-		'emulePwd': { label: 'Emule Password', title : 'the password you choose to access your emule web server (optional: leave it empty if your web server has none)', type: 'text', default: emulePwd },
-		'emuleCat': { label: 'Category', title : 'categories available in your emule/amule application. You can add categories using the following template:\ncategory_name1=corresponding_index_in_emule;category_name2=...\nAdding a * before the name specify the default choice.\nIf you don\'t know what you are doing just specify this: *default=0', type: 'text', default: catToStr(emuleCat) },
-		'section2' : { section: ['Popup Configuration', 'modify how the popup is displayed'], label: '', type: 'hidden'},
-		'popupPos': { label: 'Popup Position', title : 'choosing \'absolute\', the popup will stay at the top. Choosing fixed, the popup will follow as you scroll within the page', type: 'radio', options:['absolute','fixed'], default: popupPos },
-		'popupHeight': { label: 'Max Popup Height in px (0=unlimited)', title : 'Max height of the popup in pixels (0=unlimited)', type: 'int', default: popupHeight },
-		'popupWidth': { label: 'Max Popup Width in px (0=unlimited)', title : 'Max width of the popup in pixels (0=unlimited)', type: 'int', default: popupWidth },
-		'section3' : { section: ['Edit box Configuration', 'modify how the edit box is displayed'], label: '', type: 'hidden'},
-		'editCol': { label: 'Number of columns', title : 'number of columns', type: 'radio', type: 'int', default: editCol },
-		'editRow': { label: 'Number of rows', title : 'Number of rows', type: 'int', default: editRow },
+	// Configure Settings dialog: the fields, then the look and the behavior of the dialog, given to
+	// GM_config through its custom CSS and its open/close callbacks (settingsDialogOpened())
+	GM_config.init(configDiv, settingsTitle(), SETTINGS_CSS, {
+		'section1' : { section: ['Servers', 'Where the ed2k links are sent: the servers you use, and the one that receives the links'], label: '', type: 'hidden'},
+		'ed2kDlMethod': { label: 'Ed2k Download Method', title: 'How the links are sent:\nLocal: to the application of your system that handles ed2k links (default)\neMule (web): to eMule, on this computer or another one, through its web interface\naMule 3.x (amuleapi): to aMule 3.1 or later, through its REST API\naMule 2.x (amuleweb): to aMule 2.x, through its web interface\nMLDonkey (web): to MLDonkey, through its web interface\nCustom: posted to your own server', type:'select', options:{'local':'Local (your system default)','emule':'eMule (web)','amuleapi':'aMule 3.x (amuleapi)','amule':'aMule 2.x (amuleweb)','mldonkey':'MLDonkey (web)','custom':'Custom (post to your own server)'}, default: ed2kDlMethod}, // default value doesn't work with a dropdown menu => see bugfix in the lib
+		'emuleUrl': { label: 'Server URL', title : 'The address of the web interface of eMule, aMule or MLDonkey, or of your own server.\nFor instance http://127.0.0.1:4711/ (a final / is added when missing).', type: 'text', size: 32, default: emuleUrl },
+		'emulePwd': { label: 'Password', title : 'The password of the web interface. Optional: leave it empty if it has none.\nFor aMule 3.x, its admin password. Test checks the Server URL and the password, without saving them.', type: 'text', size: 20, default: emulePwd },
+		'emuleCat': { label: 'Category', title : 'The categories offered in the popup, as name=value, separated by ;\nA * before a name makes it the default one.\neMule and aMule 3.x: the value is the number of the category (0: the default category), e.g. *default=0;Video=2\naMule 3.x: Import fills the field with the categories of aMule, in its order.\naMule 2.x: the value is the name of the category, e.g. *Audio=audio;Video=Video', type: 'text', size: 40, default: catToStr(emuleCat) },
+		'section2' : { section: ['Popup', 'How the popup is displayed'], label: '', type: 'hidden'},
+		'popupPos': { label: 'Popup Position', title : 'fixed: the popup stays in view when the page scrolls.\nabsolute: the popup stays at the top of the page.', type: 'radio', options:['absolute','fixed'], default: popupPos },
+		'popupHeight': { label: 'Max Popup Height in px (0=unlimited)', title : 'The maximum height of the popup, in pixels: at least 40, or 0 for unlimited.', type: 'int', size: 6, default: popupHeight },
+		'popupWidth': { label: 'Max Popup Width in px (0=unlimited)', title : 'The maximum width of the popup, in pixels: at least 100, or 0 for unlimited.', type: 'int', size: 6, default: popupWidth },
+		'section3' : { section: ['Edit box', 'The size of the text box of the edit mode'], label: '', type: 'hidden'},
+		'editCol': { label: 'Number of columns', title : 'The width of the edit box, in characters.', type: 'int', size: 4, default: editCol },
+		'editRow': { label: 'Number of rows', title : 'The height of the edit box, in lines.', type: 'int', size: 4, default: editRow },
 		},
 		{
 		//open: function() { GM_config.sections2tabs(); }, // not working (not included into the library)
-		save: function() { location.reload(); } // reload the page when configuration was changed
+		open: function() { settingsDialogOpened(); },
+		close: function() { settingsDialogClosed(); },
+		save: function() { storeServers(); location.reload(); } // reload the page when configuration was changed
 		}
 	);
 
@@ -1900,6 +2202,1168 @@ function scriptConfig() {
 	// store the settings
 	saveConfig();
 
+}
+
+// -------------------------------------------------------------------------
+// Settings dialog: look and behavior added to the dialog built by GM_config
+// -------------------------------------------------------------------------
+
+/**
+* The title of the settings dialog, with the version of the script given by the userscript manager
+*/
+function settingsTitle() {
+	var version = (typeof GM_info != 'undefined' && GM_info.script) ? GM_info.script.version : '';
+	return 'Emule Linker ' + (version ? version + ' ' : '') + '\u2014 Settings';
+}
+
+/**
+* Called by GM_config once the settings dialog is built: helps under the fields, masked password,
+* the servers as a list each with its own method and settings, values checked before saving,
+* Escape and a backdrop to close it
+*/
+function settingsDialogOpened() {
+	var root = document.getElementById('GM_config');
+	var rows = root.querySelectorAll('.config_var');
+	var pwd = document.getElementById('GM_config_field_emulePwd');
+	var reveal;
+
+	trace('settingsDialogOpened()');
+	for (var i=0; i<rows.length; i++) {
+		var row = rows[i];
+		var text = row.getAttribute('title');
+		row.removeAttribute('title');	// no slow tooltip of the browser
+		if (row.querySelector('input[type=hidden]')) {
+			row.style.display = 'none';		// the fields that only hold a section title
+			continue;
+		}
+		if (text) {
+			// the help is shown under the field instead
+			var help = document.createElement('div');
+			help.className = 'help';
+			help.textContent = text;
+			row.appendChild(help);
+		}
+	}
+
+	// the password is masked, a button shows it
+	pwd.type = 'password';
+	pwd.autocomplete = 'off';
+	reveal = document.createElement('button');
+	reveal.type = 'button';
+	reveal.className = 'reveal';
+	reveal.textContent = 'Show';
+	reveal.addEventListener('click', function () {
+		pwd.type = (pwd.type == 'password') ? 'text' : 'password';
+		reveal.textContent = (pwd.type == 'password') ? 'Show' : 'Hide';
+	}, false);
+	// the password and its button share the whole width of the column, as the other long fields
+	var pwdbox = document.createElement('div');
+	pwdbox.className = 'pwdbox';
+	pwd.parentNode.insertBefore(pwdbox, pwd);
+	pwdbox.appendChild(pwd);
+	pwdbox.appendChild(reveal);
+
+	// the servers as a list, each one with its name, method and settings
+	setupServers();
+
+	// Test and Import, for aMule 3.x (amuleapi)
+	addApiButtons();
+
+	// the values are checked before GM_config saves them: this listener on the holder of the
+	// buttons runs before the one of the Save button, and stops the click when a value is wrong.
+	// The fields of GM_config then receive the settings of the checked server, which it saves.
+	document.getElementById('GM_config_buttons_holder').addEventListener('click', function (e) {
+		if (e.target.id != 'GM_config_saveBtn') {
+			return;
+		}
+		if (!checkSettings() || !keepEditedServer()) {
+			e.stopPropagation();
+			e.preventDefault();
+			return;
+		}
+		prepareServersForSaving();
+	}, true);
+
+	// a Help button that shows or hides the helps of every field, the choice being kept
+	addHelpButton();
+
+	// a Reset button that tells what it changed, and can be undone
+	addResetButton();
+
+	// a backdrop behind the dialog, and Escape to close it
+	if (!document.getElementById('GM_config_backdrop')) {
+		var backdrop = document.createElement('div');
+		backdrop.id = 'GM_config_backdrop';
+		backdrop.setAttribute('style', 'position:fixed; top:0; left:0; right:0; bottom:0; z-index:998;'
+			+ ' background:rgba(0,0,0,.35);');
+		document.body.appendChild(backdrop);
+	}
+	document.addEventListener('keydown', closeSettingsOnEscape, true);
+
+	// the links to the repository, at the bottom
+	addFooter();
+}
+
+/**
+* Add the links to the repository at the bottom of the settings dialog: to report a problem, and
+* to the project. They open in a new tab.
+*/
+function addFooter() {
+	var footer = document.createElement('div');
+	var links = [['GM_config_issuesLink', REPOSITORY + '/issues', 'Report a problem ↗'],
+		['GM_config_repoLink', REPOSITORY, 'Emule Linker on GitHub ↗']];
+
+	footer.className = 'footer';
+	for (var i=0; i<links.length; i++) {
+		var a = document.createElement('a');
+		a.id = links[i][0];
+		a.href = links[i][1];
+		a.target = '_blank';
+		a.rel = 'noopener noreferrer';
+		a.textContent = links[i][2];
+		footer.appendChild(a);
+	}
+	document.getElementById('GM_config_wrapper').appendChild(footer);
+}
+
+/**
+* Called by GM_config when the settings dialog is closed
+*/
+function settingsDialogClosed() {
+	var backdrop = document.getElementById('GM_config_backdrop');
+	if (backdrop) {
+		backdrop.parentNode.removeChild(backdrop);
+	}
+	document.removeEventListener('keydown', closeSettingsOnEscape, true);
+	dialogServers = null;
+	dialogEdited = null;
+}
+
+/**
+* A field of the settings dialog
+*/
+function settingsField(id) {
+	return document.getElementById('GM_config_field_' + id);
+}
+
+/**
+* The name displayed for a download method, as in the settings dialog
+*/
+function methodLabel(method) {
+	var options = GM_config.fields.ed2kDlMethod.settings.options;
+	return options[method] || method;
+}
+
+/**
+* A new server, with the default settings
+*/
+function newServer(name, method) {
+	var server = {id: '', name: name, method: method};
+	var ids = dialogServers.list.map(function (srv) { return parseInt(srv.id.replace(/\D/g, ''), 10) || 0; });
+	server.id = 'srv' + (Math.max.apply(null, [0].concat(ids)) + 1);
+	for (var i=0; i<METHOD_SETTINGS.length; i++) {
+		server[METHOD_SETTINGS[i]] = GM_config.fields[METHOD_SETTINGS[i]].settings['default'];
+	}
+	return server;
+}
+
+/**
+* The server of the settings dialog that has this id
+*/
+function findServer(id) {
+	return dialogServers.list.filter(function (srv) { return srv.id == id; })[0] || null;
+}
+
+/**
+* Show the servers of the settings dialog as a list: each one has a name, a download method and
+* its settings, and a radio button chooses the one that receives the links (or Local)
+* The servers are kept in "servers"; the checked one also has its method and settings in
+* GM_config, which the rest of the script reads: they are taken from there, which also turns the
+* single set of settings of the older versions into a server.
+*/
+function setupServers() {
+	var select = settingsField('ed2kDlMethod');
+	var row = document.getElementById('GM_config_ed2kDlMethod_var');
+	var list = document.createElement('div');
+	var fields = document.createElement('div');
+	var add = document.createElement('div');
+	var addBtn = document.createElement('button');
+	var stored = GM_getValue('servers', '');
+	var active;
+
+	dialogServers = {active: null, list: []};
+	try {
+		if (stored) {
+			dialogServers = JSON.parse(stored);
+		}
+	}
+	catch (e) {
+		trace('setupServers() servers ignored: ' + e);
+	}
+	if (select.value != 'local') {
+		active = findServer(dialogServers.active);
+		if (active == null) {
+			active = newServer(methodLabel(select.value), select.value);
+			dialogServers.list.push(active);
+			dialogServers.active = active.id;
+		}
+		active.method = select.value;
+		for (var i=0; i<METHOD_SETTINGS.length; i++) {
+			active[METHOD_SETTINGS[i]] = settingsField(METHOD_SETTINGS[i]).value;
+		}
+	}
+	else {
+		dialogServers.active = null;
+	}
+	dialogEdited = dialogServers.active;
+
+	list.className = 'slist';
+	list.id = 'GM_config_servers';
+	row.insertBefore(list, row.querySelector('.help'));
+	row.querySelector('.help').textContent = 'The checked server receives the links: Local, or one of your servers.\n'
+		+ 'Each server has a name, a download method and its own settings, shown by Edit: several servers of the same kind are possible.\n'
+		+ 'Delete removes a server, + Add a server adds one. Save stores all of them.';
+
+	// the settings of a server: its name, its method, then the fields of GM_config that the method uses
+	fields.className = 'sfields';
+	fields.id = 'GM_config_server_fields';
+	fields.appendChild(settingRow('serverName', 'Name', 'input',
+		'A name to tell your servers apart, required and different for each server.'));
+	fields.appendChild(settingRow('serverMethod', 'Ed2k Download Method', 'select',
+		GM_config.fields.ed2kDlMethod.settings.title));
+	for (var i=0; i<METHOD_SETTINGS.length; i++) {
+		fields.appendChild(document.getElementById('GM_config_' + METHOD_SETTINGS[i] + '_var'));
+	}
+	list.appendChild(fields);
+
+	add.className = 'sadd';
+	addBtn.type = 'button';
+	addBtn.id = 'GM_config_addServer';
+	addBtn.textContent = '+ Add a server';
+	addBtn.addEventListener('click', addServer, false);
+	add.appendChild(addBtn);
+	list.appendChild(add);
+
+	// the row of the server being edited follows what is typed
+	settingsField('serverName').addEventListener('input', function () {
+		var label = document.querySelector('#GM_config_server_' + dialogEdited + ' label');
+		if (label) {
+			label.textContent = this.value;
+		}
+	}, false);
+	settingsField('emuleUrl').addEventListener('input', function () {
+		var sum = document.querySelector('#GM_config_server_' + dialogEdited + ' .sum');
+		if (sum) {
+			sum.textContent = this.value;
+		}
+	}, false);
+	settingsField('serverMethod').addEventListener('change', function () {
+		var badge = document.querySelector('#GM_config_server_' + dialogEdited + ' .method');
+		if (badge) {
+			badge.textContent = methodLabel(this.value);
+		}
+		removeApiStatus('test');
+		removeApiStatus('import');
+		showServerFields();
+	}, false);
+
+	showServers();
+}
+
+/**
+* A row of the settings of a server, built as the rows of GM_config: label, field, help
+*/
+function settingRow(id, text, tag, helpText) {
+	var row = document.createElement('div');
+	var label = document.createElement('label');
+	var field = document.createElement(tag);
+	var help = document.createElement('div');
+	var options = GM_config.fields.ed2kDlMethod.settings.options;
+
+	row.className = 'config_var';
+	row.id = 'GM_config_' + id + '_var';
+	label.className = 'field_label';
+	label.textContent = text;
+	label.htmlFor = 'GM_config_field_' + id;
+	field.id = 'GM_config_field_' + id;
+	if (tag == 'input') {
+		field.type = 'text';
+	}
+	else {
+		for (var method in options) {
+			if (method != 'local') {	// the local method needs no server
+				var option = document.createElement('option');
+				option.value = method;
+				option.textContent = options[method];
+				field.appendChild(option);
+			}
+		}
+	}
+	help.className = 'help';
+	help.textContent = helpText;
+	row.appendChild(label);
+	row.appendChild(field);
+	row.appendChild(help);
+	return row;
+}
+
+/**
+* A row of the list of the servers: a radio button to choose the server that receives the links,
+* its name, its method, its address, and the buttons to edit or delete it
+*/
+function serverRow(server) {
+	var row = document.createElement('div');
+	var radio = document.createElement('input');
+	var label = document.createElement('label');
+	var badge = document.createElement('span');
+	var sum = document.createElement('span');
+	var acts = document.createElement('span');
+	var id = server ? server.id : 'local';
+
+	row.className = 'srow';
+	row.id = 'GM_config_server_' + id;
+	row.setAttribute('data-server', id);
+	radio.type = 'radio';
+	radio.name = 'GM_config_server';
+	radio.id = 'GM_config_server_radio_' + id;
+	radio.value = id;
+	radio.checked = server ? (dialogServers.active == id) : (dialogServers.active == null);
+	radio.addEventListener('change', function () { chooseServer(server ? id : null); }, false);
+	label.htmlFor = radio.id;
+	label.textContent = server ? server.name : 'Local';
+	badge.className = 'method';
+	badge.textContent = server ? methodLabel(server.method) : 'your system default';
+	badge.title = badge.textContent;	// the whole name, when the badge is too narrow for it
+	sum.className = 'sum' + (server ? '' : ' none');
+	sum.textContent = server ? server.emuleUrl : 'nothing to configure';
+	acts.className = 'acts';
+	if (server) {
+		var edit = document.createElement('button');
+		var del = document.createElement('button');
+		edit.type = 'button';
+		edit.className = 'edit';
+		edit.textContent = 'Edit';
+		edit.style.visibility = (dialogEdited == id) ? 'hidden' : '';
+		edit.addEventListener('click', function () { editServer(id); }, false);
+		del.type = 'button';
+		del.className = 'del';
+		del.textContent = 'Delete';
+		del.addEventListener('click', function () { deleteServer(id); }, false);
+		acts.appendChild(edit);
+		acts.appendChild(del);
+	}
+	row.classList.toggle('sel', radio.checked);
+	row.appendChild(radio);
+	row.appendChild(label);
+	row.appendChild(badge);
+	row.appendChild(sum);
+	row.appendChild(acts);
+	return row;
+}
+
+/**
+* Display the list of the servers as it is, and under the server being edited its settings
+*/
+function showServers() {
+	var list = document.getElementById('GM_config_servers');
+	var fields = document.getElementById('GM_config_server_fields');
+	var add = list.querySelector('.sadd');
+	var rows = list.querySelectorAll('.srow');
+	var server = findServer(dialogEdited);
+
+	for (var i=0; i<rows.length; i++) {
+		rows[i].parentNode.removeChild(rows[i]);
+	}
+	list.insertBefore(serverRow(null), list.firstChild);
+	for (var i=0; i<dialogServers.list.length; i++) {
+		list.insertBefore(serverRow(dialogServers.list[i]), add);
+	}
+	if (server == null) {
+		dialogEdited = null;
+		fields.style.display = 'none';
+		list.insertBefore(fields, add);
+		return;
+	}
+	var edited = document.getElementById('GM_config_server_' + server.id);
+	edited.parentNode.insertBefore(fields, edited.nextSibling);
+	fields.style.display = '';
+	settingsField('serverName').value = server.name;
+	settingsField('serverMethod').value = server.method;
+	for (var i=0; i<METHOD_SETTINGS.length; i++) {
+		settingsField(METHOD_SETTINGS[i]).value = server[METHOD_SETTINGS[i]];
+	}
+	showServerFields();
+}
+
+/**
+* Show, in the settings of the server being edited, the fields that its method uses only, and
+* the Test and Import buttons for aMule 3.x (amuleapi) only
+*/
+function showServerFields() {
+	var method = settingsField('serverMethod').value;
+	for (var i=0; i<METHOD_SETTINGS.length; i++) {
+		document.getElementById('GM_config_' + METHOD_SETTINGS[i] + '_var').style.display =
+			(METHOD_FIELDS[method].indexOf(METHOD_SETTINGS[i]) != -1) ? '' : 'none';
+	}
+	document.getElementById('GM_config_server_fields').classList.toggle('noapi', method != 'amuleapi');
+}
+
+/**
+* The wrong values of the server being edited: a missing or duplicate name, a Server URL that
+* does not start with http:// or https://, a category list without any valid entry
+* @return [[field id, message], ...]
+*/
+function serverErrors() {
+	var errors = [];
+	var name, method;
+
+	if (dialogEdited == null) {
+		return errors;
+	}
+	name = settingsField('serverName').value.trim();
+	method = settingsField('serverMethod').value;
+	if (name == '') {
+		errors.push(['serverName', 'A name is required']);
+	}
+	else if (dialogServers.list.some(function (srv) {
+			return srv.id != dialogEdited && srv.name.trim().toLowerCase() == name.toLowerCase(); })) {
+		errors.push(['serverName', 'Another server already has this name']);
+	}
+	if (METHOD_FIELDS[method].indexOf('emuleUrl') != -1 && !SERVER_URL.test(settingsField('emuleUrl').value.trim())) {
+		errors.push(['emuleUrl', SERVER_URL_ERROR]);
+	}
+	if (METHOD_FIELDS[method].indexOf('emuleCat') != -1 && strToCat(settingsField('emuleCat').value.trim()) == -1) {
+		errors.push(['emuleCat', CATEGORY_ERROR]);
+	}
+	return errors;
+}
+
+/**
+* Keep in memory the settings displayed for the server being edited, once they are right
+* @return false when a value is wrong: it is then shown under its field
+*/
+function keepEditedServer() {
+	var server = findServer(dialogEdited);
+	var errors;
+
+	if (server == null) {
+		return true;
+	}
+	clearSettingsErrors();
+	errors = serverErrors();
+	if (errors.length > 0) {
+		for (var i=0; i<errors.length; i++) {
+			showSettingsError(errors[i][0], errors[i][1]);
+		}
+		settingsField(errors[0][0]).focus();
+		return false;
+	}
+	server.name = settingsField('serverName').value.trim();
+	server.method = settingsField('serverMethod').value;
+	for (var i=0; i<METHOD_SETTINGS.length; i++) {
+		server[METHOD_SETTINGS[i]] = settingsField(METHOD_SETTINGS[i]).value;
+	}
+	return true;
+}
+
+/**
+* Choose the server that receives the links (radio button), null for Local: its settings are displayed
+*/
+function chooseServer(id) {
+	if (!keepEditedServer()) {
+		showServers();		// the radio button goes back to the server checked before
+		return;
+	}
+	trace('chooseServer() ' + id);
+	clearSettingsMarks();	// the notice of a deletion: its Undo would also undo this change
+	dialogServers.active = id;
+	dialogEdited = id;
+	showServers();
+}
+
+/**
+* Display the settings of a server without choosing it (Edit button)
+*/
+function editServer(id) {
+	if (!keepEditedServer()) {
+		return;
+	}
+	clearSettingsMarks();
+	dialogEdited = id;
+	showServers();
+	settingsField('serverName').focus();
+}
+
+/**
+* Add a server, with the default settings: its settings are displayed, to name and configure it
+*/
+function addServer() {
+	var name = 'New server';
+	var n = 1;
+	var server;
+
+	if (!keepEditedServer()) {
+		return;
+	}
+	clearSettingsMarks();
+	while (dialogServers.list.some(function (srv) { return srv.name.toLowerCase() == name.toLowerCase(); })) {
+		name = 'New server ' + (++n);
+	}
+	server = newServer(name, 'emule');
+	dialogServers.list.push(server);
+	dialogEdited = server.id;
+	showServers();
+	settingsField('serverName').focus();
+	settingsField('serverName').select();
+}
+
+/**
+* Delete a server at once; a notice with an Undo button takes its place in the list, where the
+* user clicked, so that it is in view. Deleting the checked server checks Local.
+*/
+function deleteServer(id) {
+	var before;
+	var server = findServer(id);
+	var index = dialogServers.list.indexOf(server);
+	var next;
+
+	if (id != dialogEdited && !keepEditedServer()) {
+		return;
+	}
+	before = {servers: JSON.stringify(dialogServers), edited: dialogEdited};
+	clearSettingsMarks();
+	dialogServers.list = dialogServers.list.filter(function (srv) { return srv.id != id; });
+	if (dialogServers.active == id) {
+		dialogServers.active = null;
+	}
+	if (dialogEdited == id) {
+		dialogEdited = null;
+	}
+	showServers();
+	// the notice goes before the server that followed the deleted one, or before "+ Add a server"
+	next = dialogServers.list[index] ? document.getElementById('GM_config_server_' + dialogServers.list[index].id)
+		: document.querySelector('#GM_config_servers .sadd');
+	showNotice('Server "' + server.name + '" deleted, not saved yet.', function () {
+		dialogServers = JSON.parse(before.servers);
+		dialogEdited = before.edited;
+		showServers();
+	}, next);
+}
+
+/**
+* Before GM_config saves: its fields receive the method and the settings of the checked server, the
+* ones the rest of the script reads (Local and the default settings when no server is checked)
+*/
+function prepareServersForSaving() {
+	var server = findServer(dialogServers.active);
+	var defaults = newServer('', 'emule');
+	settingsField('ed2kDlMethod').value = server ? server.method : 'local';
+	for (var i=0; i<METHOD_SETTINGS.length; i++) {
+		settingsField(METHOD_SETTINGS[i]).value = (server || defaults)[METHOD_SETTINGS[i]];
+	}
+}
+
+/**
+* Store the servers, once GM_config has saved the other settings
+*/
+function storeServers() {
+	if (dialogServers != null) {
+		GM_setValue('servers', JSON.stringify(dialogServers));
+	}
+}
+
+/**
+* Show a notice, with an Undo button when undo is given: under the buttons of the settings dialog,
+* or before the element "before" (in the list of the servers, for a deleted server)
+*/
+function showNotice(text, undo, before) {
+	var bar = document.getElementById('GM_config_buttons_holder');
+	var notice = document.createElement('div');
+	var button;
+
+	notice.className = 'notice';
+	notice.id = 'GM_config_notice';
+	notice.textContent = text;
+	if (undo) {
+		button = document.createElement('button');
+		button.type = 'button';
+		button.id = 'GM_config_undoBtn';
+		button.textContent = '\u21b6 Undo';
+		button.addEventListener('click', function () {
+			undo();
+			clearSettingsMarks();
+		}, false);
+		notice.appendChild(button);
+	}
+	if (before) {
+		before.parentNode.insertBefore(notice, before);
+	}
+	else {
+		bar.appendChild(notice);
+	}
+}
+
+/**
+* Add the buttons of aMule 3.x (amuleapi) to the settings of a server: Test after Show, on the row
+* of the password, and Import after the Category field. They are shown for this method only
+* (showServerFields()), and use what is typed in the dialog, saved or not.
+*/
+function addApiButtons() {
+	var cat = settingsField('emuleCat');
+	var catbox = document.createElement('div');
+	var make = function (id, text, title, action) {
+		var button = document.createElement('button');
+		button.type = 'button';
+		button.id = id;
+		button.className = 'apibtn';
+		button.textContent = text;
+		button.title = title;
+		button.addEventListener('click', action, false);
+		return button;
+	};
+
+	settingsField('emulePwd').parentNode.appendChild(		// the box of the password and of Show
+		make('GM_config_testBtn', 'Test', 'Test the server URL and the password', testAmuleApi));
+	catbox.className = 'catbox';
+	cat.parentNode.insertBefore(catbox, cat);
+	catbox.appendChild(cat);
+	catbox.appendChild(make('GM_config_importBtn', 'Import', 'Fill the field with the categories of aMule',
+		importAmuleCategories));
+
+	// a result no longer matches the fields once they are changed
+	settingsField('emuleUrl').addEventListener('input', function () { removeApiStatus('test'); }, false);
+	settingsField('emulePwd').addEventListener('input', function () { removeApiStatus('test'); }, false);
+	cat.addEventListener('input', function () { removeApiStatus('import'); }, false);
+}
+
+/**
+* Show the result of Test or Import under its field, framed in green (ok), orange (warn) or red (ko)
+* @param which 'test' or 'import'
+* @param text the message
+* @param kind 'ok', 'warn' or 'ko'
+* @param undo for an import, the function that puts the field back as it was: an Undo button on
+* the right of the message, under Import
+*/
+function showApiStatus(which, text, kind, undo) {
+	var status = document.createElement('div');
+	var box, button;
+
+	removeApiStatus(which);
+	status.id = 'GM_config_' + which + 'Status';
+	status.className = 'apistatus ' + kind;
+	status.textContent = {ok: '✔ ', warn: '⚠ ', ko: '✖ '}[kind] + text;
+	if (which == 'test') {
+		box = settingsField('emulePwd').parentNode;
+		box.parentNode.insertBefore(status, box.nextSibling);
+		return;
+	}
+	box = settingsField('emuleCat').parentNode;
+	box.appendChild(status);
+	if (undo == null) {
+		status.classList.add('wide');		// nothing under Import
+		return;
+	}
+	button = document.createElement('button');
+	button.type = 'button';
+	button.id = 'GM_config_importUndoBtn';
+	button.className = 'apibtn';
+	button.textContent = '↶ Undo';
+	button.addEventListener('click', function () {
+		undo();
+		removeApiStatus('import');
+	}, false);
+	box.appendChild(button);
+}
+
+/**
+* Remove the result of Test or Import; for an import, also its Undo button and its highlight
+* @param which 'test' or 'import'
+*/
+function removeApiStatus(which) {
+	var olds = [document.getElementById('GM_config_' + which + 'Status')];
+	var row = document.getElementById('GM_config_emuleCat_var');
+
+	if (which == 'import') {
+		olds.push(document.getElementById('GM_config_importUndoBtn'));
+		if (row) {
+			row.classList.remove('changed');
+		}
+	}
+	for (var i=0; i<olds.length; i++) {
+		if (olds[i]) {
+			olds[i].parentNode.removeChild(olds[i]);
+		}
+	}
+}
+
+/**
+* Start a Test or an Import: the address typed is checked, then Test and Import are disabled
+* until the answer, the button clicked showing that it waits
+* @param button the button clicked
+* @param waiting its text while it waits
+* @return what the request needs and what is checked when its answer arrives, or null when the
+* address is wrong (shown under the field)
+*/
+function startApiAction(button, waiting) {
+	var url = settingsField('emuleUrl').value.trim();
+	var buttons = document.querySelectorAll('#GM_config_testBtn, #GM_config_importBtn');
+	var ctx;
+
+	clearSettingsMarks();		// the next action: the previous results and notices go away
+	if (!SERVER_URL.test(url)) {
+		showSettingsError('emuleUrl', SERVER_URL_ERROR);
+		settingsField('emuleUrl').focus();
+		return null;
+	}
+	if (url.charAt(url.length - 1) != '/') {
+		url += '/';
+	}
+	for (var i=0; i<buttons.length; i++) {
+		buttons[i].disabled = true;
+	}
+	ctx = {button: button, label: button.textContent, url: url, api: url + 'api/v1/', edited: dialogEdited,
+		typed: [settingsField('emuleUrl').value, settingsField('emulePwd').value, settingsField('emuleCat').value]};
+	button.textContent = waiting;
+	return ctx;
+}
+
+/**
+* End a Test or an Import: the buttons are enabled again, the session closed, and the result shown,
+* unless the dialog no longer shows what was tested (closed, another server, fields changed)
+* @param ctx what startApiAction() returned
+* @param token the token of the session, or null
+* @param result {which, text, kind, apply, undo}: apply changes the dialog, undo puts it back
+*/
+function finishApiAction(ctx, token, result) {
+	var buttons = document.querySelectorAll('#GM_config_testBtn, #GM_config_importBtn');
+	var now;
+
+	for (var i=0; i<buttons.length; i++) {
+		buttons[i].disabled = false;
+	}
+	ctx.button.textContent = ctx.label;
+	if (token != null) {
+		gmRequest('POST', ctx.api + 'auth/logout', null, token).catch(function () {});
+	}
+	now = GM_config.isOpen && document.contains(ctx.button) ?
+		[settingsField('emuleUrl').value, settingsField('emulePwd').value, settingsField('emuleCat').value] : null;
+	if (result == null || now == null || dialogEdited != ctx.edited || now.join('\n') != ctx.typed.join('\n')) {
+		trace('finishApiAction() result ignored: the dialog has changed');
+		return;
+	}
+	showApiStatus(result.which, result.text, result.kind, result.undo);
+	if (result.apply) {
+		result.apply();		// after the message: showing it removes the highlight of a previous import
+	}
+}
+
+/**
+* The message for a request of Test or Import that got no answer
+*/
+function apiFailure(e, url) {
+	return e.timeout ? 'aMule has not answered within ' + Math.round(e.timeout / 1000) + ' s'
+		: 'aMule can not be reached at ' + url;
+}
+
+/**
+* Test button: log in to aMule with the address and the password typed, then read its version and
+* its connection state (SF-8.17). Nothing is saved.
+*/
+async function testAmuleApi() {
+	var ctx = startApiAction(this, 'Test…');
+	var token = null;
+	var result = null;
+	var r, version, state, networks, name;
+
+	if (ctx == null) {
+		return;
+	}
+	trace('testAmuleApi() ' + ctx.url);
+	try {
+		r = await gmRequest('POST', ctx.api + 'auth/login?include_token=true', {password: ctx.typed[1]});
+		if (r.status != 200 || r.json == null || !r.json.token) {
+			result = {which: 'test', text: amuleApiError(r, ctx.url), kind: 'ko'};
+			return;
+		}
+		token = r.json.token;
+		version = await gmRequest('GET', ctx.api + 'version', null, null);
+		state = await gmRequest('GET', ctx.api + 'status', null, token);
+		name = 'aMule' + ((version.status == 200 && version.json && version.json.daemon_version) ?
+			' ' + version.json.daemon_version : '');
+		if (r.json.role && r.json.role != 'admin') {
+			result = {which: 'test', kind: 'warn', text: 'Connected to ' + name
+				+ ', but this password can not add downloads: the admin password of aMule is needed'};
+		}
+		else if (state.status == 503 || (state.json && state.json.ec_connected === false)) {
+			result = {which: 'test', kind: 'warn', text: 'Connected to ' + name
+				+ ', but aMule is not connected to its core (amuled): the links would be refused'};
+		}
+		else {
+			networks = [];
+			if (state.json && state.json.ed2k && state.json.ed2k.state) {
+				networks.push('ed2k: ' + state.json.ed2k.state);
+			}
+			if (state.json && state.json.kad && state.json.kad.state) {
+				networks.push('Kad: ' + state.json.kad.state);
+			}
+			result = {which: 'test', kind: 'ok',
+				text: 'Connected to ' + name + (networks.length ? ' (' + networks.join(', ') + ')' : '') + '.'};
+		}
+	}
+	catch (e) {
+		trace('testAmuleApi() ' + e);
+		result = {which: 'test', text: apiFailure(e, ctx.url), kind: 'ko'};
+	}
+	finally {
+		finishApiAction(ctx, token, result);
+	}
+}
+
+/**
+* Import button: read the categories of aMule, every page of them, and fill the Category field
+* with them (SF-8.18). The field is highlighted, and an Undo button puts it back. Nothing is saved.
+*/
+async function importAmuleCategories() {
+	var ctx = startApiAction(this, 'Import…');
+	var token = null;
+	var result = null;
+	var cats = [];
+	var r, merged;
+
+	if (ctx == null) {
+		return;
+	}
+	trace('importAmuleCategories() ' + ctx.url);
+	try {
+		r = await gmRequest('POST', ctx.api + 'auth/login?include_token=true', {password: ctx.typed[1]});
+		if (r.status != 200 || r.json == null || !r.json.token) {
+			result = {which: 'import', text: amuleApiError(r, ctx.url), kind: 'ko'};
+			return;
+		}
+		token = r.json.token;
+		// the API answers page by page (100 categories by default; aMule has 256 at most)
+		do {
+			r = await gmRequest('GET', ctx.api + 'categories?limit=100&offset=' + cats.length, null, token);
+			if (r.status != 200 || r.json == null || !Array.isArray(r.json.categories)) {
+				result = {which: 'import', text: amuleApiError(r, ctx.url), kind: 'ko'};
+				return;
+			}
+			cats = cats.concat(r.json.categories);
+		} while (r.json.categories.length > 0 && cats.length < (r.json.total || 0) && cats.length < 1000);
+		merged = mergeAmuleCategories(cats, ctx.typed[2]);
+		if (merged.value == ctx.typed[2].trim()) {
+			result = {which: 'import', kind: 'ok', text: 'The field already holds the categories of aMule.'};
+		}
+		else {
+			result = {which: 'import', kind: 'ok', text: merged.message,
+				apply: function () {
+					settingsField('emuleCat').value = merged.value;
+					document.getElementById('GM_config_emuleCat_var').classList.add('changed');
+				},
+				undo: function () {
+					settingsField('emuleCat').value = ctx.typed[2];
+				}};
+		}
+	}
+	catch (e) {
+		trace('importAmuleCategories() ' + e);
+		result = {which: 'import', text: apiFailure(e, ctx.url), kind: 'ko'};
+	}
+	finally {
+		finishApiAction(ctx, token, result);
+	}
+}
+
+/**
+* The Category setting made of the categories of aMule (Import, SF-8.18)
+* In the order of aMule, each one with its name and its index, the category 0 included; Default=0
+* when aMule has none. The default one (*) stays on the category of the same name, whatever the
+* case, or else goes to the first one. The characters of the syntax of the field (; and =, a
+* leading *) are taken out of the names, and a category without a name is named after its index.
+* @param cats the categories of aMule: [{index, name}, ...]
+* @param current the value of the field before the import
+* @return {value: the new value of the field, message: what changed}
+*/
+function mergeAmuleCategories(cats, current) {
+	var old = strToCat(String(current).trim());
+	var lower = function (s) { return s.toLowerCase(); };
+	var names = function (list) { return list.slice(0, 3).join(', ') + (list.length > 3 ? ', …' : ''); };
+	var entries = [];
+	var oldDefault = '';
+	var def, added, removed, parts, message;
+
+	if (old == -1) {
+		old = [];
+	}
+	for (var i=0; i<old.length; i++) {
+		if (old[i].select == 1) {
+			oldDefault = old[i].name;
+		}
+	}
+	for (var i=0; i<cats.length; i++) {
+		var index = parseInt(cats[i].index, 10);
+		var name = String(cats[i].name == null ? '' : cats[i].name)
+			.replace(/[;=]/g, ' ').replace(/^[\s*]+/, '').replace(/\s+/g, ' ').trim();
+		if (isNaN(index)) {
+			continue;
+		}
+		entries.push({name: name || 'Category ' + index, index: index});
+	}
+	if (entries.length == 0) {
+		return {value: '*Default=0', message: 'aMule has no category: Default=0 is used.'};
+	}
+	def = entries.filter(function (e) { return oldDefault != '' && lower(e.name) == lower(oldDefault); })[0] || entries[0];
+	added = entries.filter(function (e) {
+		return !old.some(function (c) { return lower(c.name) == lower(e.name); });
+	}).map(function (e) { return e.name; });
+	removed = old.filter(function (c) {
+		return !entries.some(function (e) { return lower(e.name) == lower(c.name); });
+	}).map(function (c) { return c.name; });
+
+	parts = [];
+	if (added.length > 0) {
+		parts.push(added.length + ' new (' + names(added) + ')');
+	}
+	if (removed.length > 0) {
+		parts.push(removed.length + ' removed (' + names(removed) + ')');
+	}
+	message = entries.length + (entries.length > 1 ? ' categories' : ' category') + ' imported from aMule'
+		+ (parts.length ? ': ' + parts.join(', ') : '') + '. ' + def.name
+		+ (oldDefault != '' && lower(def.name) == lower(oldDefault) ? ' stays' : ' is now') + ' the default (*).';
+	return {value: entries.map(function (e) { return (e === def ? '*' : '') + e.name + '=' + e.index; }).join(';'),
+		message: message};
+}
+
+/**
+* The value of a field of the settings dialog, as displayed
+*/
+function settingsFieldValue(id) {
+	var node = document.getElementById('GM_config_field_' + id);
+	var checked;
+	if (node.tagName == 'DIV') {	// radio buttons
+		checked = node.querySelector('input:checked');
+		return checked ? checked.value : '';
+	}
+	return node.value;
+}
+
+/**
+* Display a value in a field of the settings dialog
+*/
+function setSettingsFieldValue(id, value) {
+	var node = document.getElementById('GM_config_field_' + id);
+	var radios;
+	if (node.tagName == 'DIV') {
+		radios = node.querySelectorAll('input');
+		for (var i=0; i<radios.length; i++) {
+			radios[i].checked = (radios[i].value == value);
+		}
+		return;
+	}
+	node.value = value;
+}
+
+/**
+* Add the Help button at the right of the title of the settings dialog
+* It shows or hides the helps under every field at once. The choice is stored (settings_help),
+* so that the dialog opens the next time as it was left.
+*/
+function addHelpButton() {
+	var root = document.getElementById('GM_config');
+	var button = document.createElement('button');
+	var show = function (on) {
+		// helps hidden: each row keeps its help as the tooltip of the browser, shown after a
+		// short delay over it; helps shown: no tooltip, the same text is already under the field
+		var helps = root.querySelectorAll('.config_var .help');
+		for (var i=0; i<helps.length; i++) {
+			if (on) {
+				helps[i].parentNode.removeAttribute('title');
+			}
+			else {
+				helps[i].parentNode.setAttribute('title', helps[i].textContent);
+			}
+		}
+		root.classList.toggle('helps', on);
+		button.textContent = on ? 'Hide help' : '? Show help';
+		button.title = on ? 'Hide the explanations of the fields' : 'Show the explanation under every field';
+	};
+
+	button.type = 'button';
+	button.id = 'GM_config_helpBtn';
+	button.className = 'helpbtn';
+	button.addEventListener('click', function () {
+		var on = !root.classList.contains('helps');
+		GM_setValue('settings_help', on ? 1 : 0);
+		show(on);
+	}, false);
+	show(GM_getValue('settings_help', 0) == 1);
+	document.getElementById('GM_config_header').appendChild(button);
+}
+
+/**
+* Replace the "Reset to defaults" link of GM_config by a button at the left of the buttons
+* The button sets every setting back to its default value, in the dialog only: Local is checked
+* and every server removed. The settings it changed are highlighted, and a notice says that
+* nothing is saved yet, with an Undo button.
+*/
+function addResetButton() {
+	var bar = document.getElementById('GM_config_buttons_holder');
+	var button = document.createElement('button');
+	var others = ['popupPos', 'popupHeight', 'popupWidth', 'editCol', 'editRow'];
+	var editor = ['serverName', 'serverMethod'].concat(METHOD_SETTINGS);
+
+	button.type = 'button';
+	button.id = 'GM_config_resetBtn';
+	button.className = 'resetbtn';
+	button.textContent = '\u21ba Reset to defaults';
+	button.title = 'Set every setting back to its default value (not saved until you press Save)';
+	button.addEventListener('click', function () {
+		var before = {servers: JSON.stringify(dialogServers), edited: dialogEdited, values: {}};
+		var changed = 0;
+
+		for (var i=0; i<others.length; i++) {
+			before.values[others[i]] = settingsFieldValue(others[i]);
+		}
+		for (var i=0; i<editor.length; i++) {
+			before.values[editor[i]] = settingsField(editor[i]).value;
+		}
+		clearSettingsMarks();
+		GM_config.reset();
+		dialogServers = {active: null, list: []};
+		dialogEdited = null;
+		for (var i=0; i<others.length; i++) {
+			if (settingsFieldValue(others[i]) != before.values[others[i]]) {
+				document.getElementById('GM_config_' + others[i] + '_var').classList.add('changed');
+				changed++;
+			}
+		}
+		if (before.servers != JSON.stringify(dialogServers)) {
+			document.getElementById('GM_config_ed2kDlMethod_var').classList.add('changed');
+			changed++;
+		}
+		showServers();
+		if (changed == 0) {
+			showNotice('Every setting already has its default value.', null);
+			return;
+		}
+		showNotice(changed + ' setting' + (changed > 1 ? 's' : '') + ' set back to ' + (changed > 1 ? 'their' : 'its')
+			+ ' default value (highlighted), not saved yet.', function () {
+			dialogServers = JSON.parse(before.servers);
+			dialogEdited = before.edited;
+			for (var i=0; i<others.length; i++) {
+				setSettingsFieldValue(others[i], before.values[others[i]]);
+			}
+			showServers();
+			// the text displayed for the server being edited, even if not kept yet
+			for (var i=0; i<editor.length; i++) {
+				settingsField(editor[i]).value = before.values[editor[i]];
+			}
+			if (dialogEdited != null) {
+				showServerFields();
+			}
+		});
+	}, false);
+	bar.insertBefore(button, bar.firstChild);
+}
+
+/**
+* Remove the marks of a reset (changed fields, notice), the results of Test and Import and the
+* error messages of the dialog
+*/
+function clearSettingsMarks() {
+	var marks;
+
+	removeApiStatus('test');
+	removeApiStatus('import');
+	marks = document.querySelectorAll('#GM_config .changed, #GM_config_notice');
+	for (var i=0; i<marks.length; i++) {
+		if (marks[i].id == 'GM_config_notice') {
+			marks[i].parentNode.removeChild(marks[i]);
+		}
+		else {
+			marks[i].classList.remove('changed');
+		}
+	}
+	clearSettingsErrors();
+}
+
+/**
+* Remove the error messages of the settings dialog
+*/
+function clearSettingsErrors() {
+	var olds = document.querySelectorAll('#GM_config .error, #GM_config .invalid');
+	for (var i=0; i<olds.length; i++) {
+		if (olds[i].classList.contains('error')) {
+			olds[i].parentNode.removeChild(olds[i]);
+		}
+		else {
+			olds[i].classList.remove('invalid');
+		}
+	}
+}
+
+/**
+* Show an error under a field of the settings dialog, in red, and give it the focus
+*/
+function showSettingsError(id, text) {
+	var field = settingsField(id);
+	var message = document.createElement('div');
+	message.className = 'error';
+	message.textContent = text;
+	field.classList.add('invalid');
+	document.getElementById('GM_config_' + id + '_var').appendChild(message);
+}
+
+/**
+* Escape closes the settings dialog, without saving
+*/
+function closeSettingsOnEscape(e) {
+	if (e.key == 'Escape' && GM_config.isOpen) {
+		e.preventDefault();
+		GM_config.close();
+	}
+}
+
+/**
+* Check the values of the settings dialog before they are saved
+* A wrong value is shown under its field, in red, instead of an alert, and nothing is saved.
+* The name and the category of the server being edited are checked too (serverErrors()).
+* @return true when every value can be saved
+*/
+function checkSettings() {
+	var errors = [];
+	var value = function (id) { return settingsField(id).value.trim(); };
+	var whole = /^\d+$/;
+
+	clearSettingsErrors();
+	errors = serverErrors();
+	if (!whole.test(value('popupHeight'))) {
+		errors.push(['popupHeight', 'A whole number is expected']);
+	}
+	else if (parseInt(value('popupHeight'), 10) > 0 && parseInt(value('popupHeight'), 10) < 40) {
+		errors.push(['popupHeight', 'At least 40 px, or 0 for unlimited: a smaller popup would hide its Settings button']);
+	}
+	if (!whole.test(value('popupWidth'))) {
+		errors.push(['popupWidth', 'A whole number is expected']);
+	}
+	else if (parseInt(value('popupWidth'), 10) > 0 && parseInt(value('popupWidth'), 10) < 100) {
+		errors.push(['popupWidth', 'At least 100 px, or 0 for unlimited: a smaller popup would hide its Settings button']);
+	}
+	if (!whole.test(value('editCol')) || parseInt(value('editCol'), 10) < 1) {
+		errors.push(['editCol', 'A whole number, at least 1, is expected']);
+	}
+	if (!whole.test(value('editRow')) || parseInt(value('editRow'), 10) < 1) {
+		errors.push(['editRow', 'A whole number, at least 1, is expected']);
+	}
+
+	for (var i=0; i<errors.length; i++) {
+		showSettingsError(errors[i][0], errors[i][1]);
+	}
+	if (errors.length > 0) {
+		trace('checkSettings() ' + errors.length + ' wrong value(s)');
+		settingsField(errors[0][0]).focus();
+	}
+	return errors.length == 0;
 }
 
 /**
@@ -2075,58 +3539,6 @@ function post(path, params, method) {
     // the submission has started: the form is no longer needed, it would pile up at each sending
     form.parentNode.removeChild(form);
 }
-
-/*
-function silentGet(url) {
-	var req = new XMLHttpRequest();
-
-	req.onreadystatechange = function() {
-        //silentClose(url, "emule");
-    }
-	req.open("GET", url, true);
-	req.send("");
-}
-*/
-
-/**
-* Submit a post using ajax call
-*
-* This should be a better way to send post forms but new browser doesn't accept silent calls to remote systems
-* If your emule is not using HTTPS, you will have mixed content blocking
-* Even if the remote system is HTTPS, browsers restrict cross-origin HTTP requests initiated from scripts
-*/
-function silentPost(url, params) {
-	var req = new XMLHttpRequest();
-
-    req.onreadystatechange = function() { //Call a function when the state changes.
-
-        //document.getElementById(target).innerHTML = req.responseText;
-        if (req.readyState == 4) {
-            trace("Post sent with response code ["+req.status+"]"); // Données textuelles récupérées
-            if (req.status == 200 || req.status == 0) {
-                alert("OK: "+req.responseText); // Données textuelles récupérées
-            } else {
-                alert("KO: "+req.responseText); // Données textuelles récupérées
-            }
-        }
-	}
-
-	req.open("POST", url, true);
-	req.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
-
-	var data="";
-	for(var key in params) {
-        if(params.hasOwnProperty(key)) {
-			if(data=="") {
-				data=key+"="+encodeURIComponent(params[key]);
-			} else {
-				data=data+"&"+key+"="+encodeURIComponent(params[key]);
-			}
-		}
-	}
-	req.send(data);
-}
-
 
 /**
  * Format bytes as human-readable text.

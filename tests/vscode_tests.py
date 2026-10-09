@@ -2,9 +2,10 @@
 
 VS Code discovers unittest test cases: this module turns each test function of the suite
 into a test method, one class per level (Repository, Units, Scenarios, Sending). As with
-run_tests.py, a single web server and a single headless Chrome serve the whole run.
-Standard library only. The live test against the real eMule is left out on purpose: run
-it with "python tests/run_tests.py --live-emule".
+run_tests.py, a single web server and a single headless browser serve the whole run: Chrome,
+or Firefox when the environment variable TEST_BROWSER is "firefox". Standard library only.
+The live tests are left out on purpose: run them with "python tests/run_tests.py --live-emule"
+or "--live-amule".
 
 The workspace settings point VS Code to this file:
     "python.testing.unittestArgs": ["-v", "-s", "./tests", "-p", "vscode_tests.py"]
@@ -22,18 +23,19 @@ session = {}
 
 
 def setUpModule():
-    session['server'], session['base'], session['chrome'], session['cdp'] = rt.start_session()
+    browser_class = rt.BROWSERS['--' + os.environ.get('TEST_BROWSER', 'chrome').lower()]
+    session['server'], session['base'], session['browser'], session['driver'] = rt.start_session(browser_class)
 
 
 def tearDownModule():
-    if not rt.stop_session(session['server'], session['chrome'], session['cdp']):
-        raise RuntimeError(f'the temporary Chrome profile could not be deleted: {session["chrome"].profile}')
+    if not rt.stop_session(session['server'], session['browser'], session['driver']):
+        raise RuntimeError(f'the temporary browser profile could not be deleted: {session["browser"].profile}')
 
 
 def as_test_method(test):
     """Wrap a test function of the suite: it fails with the list of its failed checks."""
     def method(self):
-        t = rt.T(session['cdp'], session['base'], session['chrome'])
+        t = rt.T(session['driver'], session['base'], session['browser'])
         test(t)
         failed = [rt.mask(label + (f': {detail}' if detail else '')) for ok, label, detail in t.checks if not ok]
         if failed:

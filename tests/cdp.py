@@ -162,3 +162,31 @@ class CDP:
                 'key': letter.lower(), 'code': 'Key' + letter.upper()}   # 3 = Alt + Ctrl
         self.call('Input.dispatchKeyEvent', dict(base, type='rawKeyDown'))
         self.call('Input.dispatchKeyEvent', dict(base, type='keyUp'))
+
+    # ---- the same operations as the WebDriver BiDi client (bidi.py), for Firefox ----------
+    def navigate(self, url):
+        before = self.loaded
+        self.call('Page.navigate', {'url': url})
+        self.wait_load(before)
+
+    def reload(self):
+        before = self.loaded
+        self.call('Page.reload')
+        self.wait_load(before)
+
+    def press(self, key):
+        """A real key press, Escape for instance."""
+        base = {'key': key, 'code': key, 'windowsVirtualKeyCode': {'Escape': 27}[key]}
+        self.call('Input.dispatchKeyEvent', dict(base, type='keyDown'))
+        self.call('Input.dispatchKeyEvent', dict(base, type='keyUp'))
+
+    def type_text(self, text):
+        """Text typed in the focused field, as by the user."""
+        self.call('Input.insertText', {'text': text})
+
+    def set_viewport(self, width, height):
+        self.call('Emulation.setDeviceMetricsOverride', {'width': width, 'height': height,
+                                                         'deviceScaleFactor': 1, 'mobile': False})
+
+    def clear_viewport(self):
+        self.call('Emulation.clearDeviceMetricsOverride')

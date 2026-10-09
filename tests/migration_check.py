@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check by hand, in a real Tampermonkey, that the installations made before 0.10 move on
 their own from the former address of the script (GM_EmuleLinker.js) to the new one
-(GM_EmuleLinker.user.js) — § 8.3 of SPECIFICATIONS.md.
+(GM_EmuleLinker.user.js) — § 7.3 of SPECIFICATIONS.md.
 
     python tests/migration_check.py [--port 8765]
 

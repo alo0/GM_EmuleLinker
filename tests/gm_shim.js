@@ -22,3 +22,29 @@ function GM_registerMenuCommand(name, callback, accessKey) {
 function GM_log(txt) {
 	console.log(txt);
 }
+
+// In Tampermonkey, GM_xmlhttpRequest is not subject to CORS: it reaches any address. A
+// fetch() from the page would be, so the test server relays the request (/__gmxhr) and
+// sends back the answer, as the extension does. Same callbacks as the real one.
+function GM_xmlhttpRequest(d) {
+	fetch('/__gmxhr', {
+		method: 'POST',
+		headers: {'Content-Type': 'application/json'},
+		body: JSON.stringify({method: d.method || 'GET', url: d.url, headers: d.headers || {},
+		                      data: d.data == null ? null : d.data, timeout: d.timeout || 0})
+	})
+	.then(function (r) { return r.json(); })
+	.then(function (r) {
+		if (r.error == 'timeout') {
+			if (d.ontimeout) d.ontimeout({});
+		}
+		else if (r.error) {
+			if (d.onerror) d.onerror({error: r.error});
+		}
+		else if (d.onload) {
+			d.onload({status: r.status, responseText: r.responseText,
+			          responseHeaders: r.responseHeaders, finalUrl: d.url});
+		}
+	})
+	.catch(function (e) { if (d.onerror) d.onerror({error: String(e)}); });
+}

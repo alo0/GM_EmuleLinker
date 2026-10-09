@@ -44,8 +44,8 @@
     <div class="spacer"></div>
     <h2>Summary</h2>
     <p>This page generates <strong><span id="count"></span></strong> valid ed2k links, to check that the popup
-       displays them all, whatever their number. Add <code>?n=5000</code> to the address to change the number.
-       The automated test suite checks the same on Chrome (see SPECIFICATIONS.md, § 8): this page is for the
+       displays them all, whatever their number. Add <code>?n=2000</code> to the address to change the number.
+       The automated test suite checks the same on Chrome (see SPECIFICATIONS.md, § 7): this page is for the
        other browsers, Firefox in particular.</p>
 
     <h2>What to check</h2>
@@ -64,7 +64,7 @@
     <script>
         // The links are generated while the page loads, before the userscript runs
         (function () {
-            var n = parseInt(new URLSearchParams(location.search).get('n'), 10) || 2000;
+            var n = parseInt(new URLSearchParams(location.search).get('n'), 10) || 500;
             var html = [];
             for (var i = 1; i <= n; i++) {
                 var num = String(i).padStart(5, '0');

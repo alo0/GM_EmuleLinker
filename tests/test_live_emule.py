@@ -25,6 +25,13 @@ import urllib.request
 import zlib
 
 
+def missing_settings():
+    """What prevents the test from running, checked by run_tests.py before it starts."""
+    if not os.environ.get('EMULE_PASSWORD'):
+        return '--live-emule needs the eMule web password in the EMULE_PASSWORD environment variable'
+    return None
+
+
 def emule_url():
     url = os.environ.get('EMULE_URL', 'http://127.0.0.1:4711/')
     return url if url.endswith('/') else url + '/'
