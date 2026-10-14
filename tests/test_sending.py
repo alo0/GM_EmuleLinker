@@ -151,7 +151,7 @@ def test_category_change_keeps_popup(t):
     t.check(t.js("!!document.getElementById('theDiv').__marker"), 'same popup, not rebuilt')
     t.eq(t.js("document.getElementById('theDiv').style.width"), '500px', 'size kept')
     t.eq(t.js("document.querySelectorAll('#divBody input:checked').length"), 7, 'checkboxes kept')
-    t.eq(set(t.js(LINK_CATS)), {'2'}, 'links of the list carry the new category')
+    t.eq(set(t.js(LINK_CATS)), {None}, 'eMule: the links of the list hold the ed2k links, not the category (SF-7.12)')
     click_add_all(t)
     received = t.received(1)
     t.eq(len(received), 1, 'one request')
@@ -220,37 +220,286 @@ def test_emule_single_link_click(t):
         t.eq(links_of(param(received[0], 'c')), expected, 'that link only')
 
 
-# ---- aMule -----------------------------------------------------------------------
-def test_amule_without_password(t):
-    """SF-7 (amule) and SF-6.3: one GET on footer.php, category 0 sent as "all"."""
-    t.load(settings=client(t, 'amule', emulePwd=''))
+def test_emule_silent_sending(t):
+    """SF-7.12: the links are sent by a request of the script, without any window, and the answer
+    of eMule is shown in the popup; a click on a file name sends it the same way (SF-3.3)."""
+    t.load(settings=client(t, 'emule'))
+    t.keys('a')
+    received = t.received(1)
+    t.eq(len(received), 1, 'one request')
+    t.eq(len(t.open_pages()), 1, 'no window opened')
+    t.eq(status_line(t), '9 link(s) added to eMule', 'the answer of eMule shown in the popup')
+    t.eq(t.js("document.getElementById('emlStatus').style.color"), 'rgb(0, 102, 0)', 'in green')
+    t.check(t.js("[].every.call(document.querySelectorAll('#divBody a.ed2k'), function (a) {"
+                 "return a.getAttribute('href').indexOf('ed2k://') == 0; })"), 'the file names hold the ed2k links')
+    t.clear_received()
+    mark_link(t, 'Été à Paris (Café).mp3')
+    t.click('#__target')
+    received = t.received(1)
+    t.eq([len(received), len(t.open_pages())], [1, 1], 'click on a file name: one request, no window')
+    if received:
+        t.eq(links_of(param(received[0], 'c')), {e for e in EXPECTED if e[0] == 'Été à Paris (Café).mp3'}, 'that link only')
+    t.eq(status_line(t), '1 link(s) added to eMule', 'its answer shown')
+    t.eq(t.dialogs, [], 'no alert')
+
+
+def test_emule_answers(t):
+    """SF-7.12: each answer of eMule is explained: password refused, links refused, an answer that is
+    not understood (orange: the links may still be added), eMule unreachable."""
+    cases = [({}, {'emulePwd': 'wrong'}, 'eMule refused the password', 'rgb(204, 0, 0)'),
+             ({'answer': '<status result="FAILED" reason="FULL"><description>x</description></status>'}, {},
+              'eMule refused the links (FULL)', 'rgb(204, 0, 0)'),
+             ({'answer': '<html>another server</html>'}, {},
+              'Links sent, but the answer of eMule is not understood: check its transfer list', 'rgb(166, 95, 0)'),
+             ({}, {'emuleUrl': 'http://127.0.0.1:9/'}, 'eMule can not be reached at http://127.0.0.1:9/', 'rgb(204, 0, 0)')]
+    for conf, settings, expected, color in cases:
+        t.load(settings=client(t, 'emule', **settings))
+        t.fake_emule(**conf)
+        t.keys('a')
+        end = time.time() + 8
+        while time.time() < end and (status_line(t) or 'Please wait').startswith('Please wait'):
+            t.pump(0.2)
+        t.eq([status_line(t), t.js("document.getElementById('emlStatus').style.color")], [expected, color], f'{conf or settings}')
+
+
+def test_emule_popup_closed_answers(t):
+    """SF-7.12 and SF-5.5: with the popup closed, a success is silent; a refusal, or an answer that
+    is not understood, is shown in an alert."""
+    for conf, settings, alert in (({}, {}, None), ({}, {'emulePwd': 'wrong'}, 'Emule Linker: eMule refused the password'),
+                                  ({'answer': 'not a status'}, {},
+                                   'Emule Linker: Links sent, but the answer of eMule is not understood: check its transfer list')):
+        t.load(settings=client(t, 'emule', **settings), popup_mode=0)
+        t.fake_emule(**conf)
+        t.keys('a')
+        t.received(1)
+        end = time.time() + 5
+        while alert and time.time() < end and not t.dialogs:
+            t.pump(0.2)
+        t.eq(t.dialogs, [alert] if alert else [], f'{conf or settings or "success"}: {"one alert" if alert else "no alert"}')
+
+
+def test_emule_waits_once(t):
+    """SF-7.12: while eMule answers, "Please wait" is shown and the "Add all links" buttons are
+    disabled: a second Ctrl+Alt+A sends nothing more. A late answer is not reported as an
+    unreachable eMule."""
+    t.load(settings=client(t, 'emule'))
+    t.fake_emule(delay=1.5)
+    t.keys('a')
+    t.pump(0.3)
+    t.check((status_line(t) or '').startswith('Please wait'), 'Please wait shown', status_line(t))
+    t.eq(t.js("[].map.call(document.querySelectorAll('#theDiv button.emlAdd'), function (b) { return b.disabled; })"),
+         [True, True], 'Add all links disabled')
+    t.keys('a')
+    t.eq(len(t.received(2, timeout=3)), 1, 'a single request')
+    t.eq(status_line(t), '9 link(s) added to eMule', 'then the answer')
+    t.load(settings=client(t, 'emule'))
+    t.fake_emule(delay=2)
+    t.js('sendingTimeout = function () { return 1000; }')      # 1 s, for the test
+    t.keys('a')
+    end = time.time() + 6
+    while time.time() < end and (status_line(t) or 'Please wait').startswith('Please wait'):
+        t.pump(0.2)
+    t.eq(status_line(t), 'eMule has not answered within 1 s: the links may still be added, check eMule', 'late answer')
+
+
+def test_emule_edit_mode_lines_left_out(t):
+    """SF-7.12: in edit mode, the lines that are not ed2k links are not sent: eMule does not check
+    them, and would answer that they are added."""
+    t.load(settings=client(t, 'emule'), popup_mode=2)
+    t.js("document.getElementById('editbox').value = '\\n  ' + eLinks.filter(function (l) {"
+         "return l.indexOf('Paris') >= 0; }).join('\\n') + '  \\na note typed by hand\\n'")
+    t.keys('a')
+    received = t.received(1)
+    if received:
+        lines = param(received[0], 'c').split('\n')
+        t.check(len(lines) == 1 and lines[0].startswith('ed2k://'), 'the ed2k link only, no empty line, no text', lines)
+        t.eq(links_of(param(received[0], 'c')), {e for e in EXPECTED if 'Paris' in e[0]}, 'the link of the edit box')
+    t.eq(status_line(t), '1 link(s) added to eMule', 'one link counted')
+
+
+def test_emule_password_encoded(t):
+    """SF-7.12: the password is encoded in the request: & # ? + and accents reach eMule intact."""
+    password = 'p&w#d ?+é'
+    t.load(settings=client(t, 'emule', emulePwd=password))
+    t.fake_emule(password=password)
+    t.keys('a')
+    received = t.received(1)
+    if received:
+        t.eq(param(received[0], 'p'), password, 'password intact')
+        t.eq(links_of(param(received[0], 'c')), EXPECTED, 'the 9 links')
+    t.eq(status_line(t), '9 link(s) added to eMule', 'accepted by eMule')
+
+
+def test_emule_category_encoded(t):
+    """SF-7.12: the category is encoded in the request: a value typed with & # or a space does not
+    cut the request (the links and the password stay)."""
+    category = '2&p #y'
+    t.load(settings=client(t, 'emule', emuleCat=f'*Odd={category};'))
     t.keys('a')
     received = t.received(1)
     t.eq(len(received), 1, 'one request')
     if received:
-        r = received[0]
-        t.eq(r['path'], '/__emule/footer.php', 'aMule web interface')
-        t.eq(param(r, 'pass'), None, 'no password sent')
-        t.eq(param(r, 'selectcat'), 'all', 'category 0 sent as "all"')
-        t.eq(param(r, 'Submit'), 'Download link', 'Submit=Download+link')
-        t.eq(links_of(param(r, 'ed2klink')), EXPECTED, 'the 9 links')
+        t.eq(param(received[0], 'cat'), category, 'category intact')
+        t.eq(param(received[0], 'p'), 'secret', 'password intact')
+        t.eq(links_of(param(received[0], 'c')), EXPECTED, 'the 9 links')
 
 
-def test_amule_with_password(t):
-    """SF-7.4: with a password, a login request first, then the links about 1 s later."""
-    t.load(settings=client(t, 'amule'))
+def test_add_all_trace_without_password(t):
+    """The trace of a sending gives the number of links, never the request: it may carry the
+    password (the request of eMule does)."""
+    t.load(settings=client(t, 'emule'))
     t.keys('a')
-    received = sorted(t.received(2, timeout=6), key=lambda r: r['time'])
-    t.eq(len(received), 2, 'two requests')
-    if len(received) == 2:
-        login, links = received
-        t.eq((login['path'], param(login, 'pass'), param(login, 'ed2klink')),
-             ('/__emule/footer.php', 'secret', None), 'login request first, without links')
-        t.check(links['time'] - login['time'] >= 0.9, 'links sent about 1 s later',
-                f"{links['time'] - login['time']:.2f} s")
-        t.eq(param(links, 'pass'), 'secret', 'password sent again with the links')
-        t.eq(param(links, 'selectcat'), 'all', 'category')
+    t.received(1)
+    t.check(t.traced('addButton() 9 link(s)'), 'number of links traced')
+    t.check(not t.traced('secret'), 'no password in the traces')
+
+# ---- aMule 2.x (amuleweb) --------------------------------------------------------------
+def amuleweb_settings(t, **changes):
+    settings = client(t, 'amule', emuleUrl=t.fake_amuleweb_url)
+    settings.update(changes)
+    return settings
+
+
+def wait_status(t, timeout=10):
+    end = time.time() + timeout
+    while time.time() < end and (status_line(t) or 'Please wait').startswith('Please wait'):
+        t.pump(0.2)
+    return status_line(t)
+
+
+def test_amule_silent_sending(t):
+    """SF-7.13 and SF-6.3: no window: a login request first (the session kept by its cookie), then
+    the links on footer.php, category 0 sent as "all", the password not repeated; the links are then
+    found in the downloads of aMule, and the answer shown in the popup."""
+    t.load(settings=amuleweb_settings(t))
+    t.keys('a')
+    t.eq(wait_status(t), '9 link(s) added to aMule', 'the answer shown in the popup')
+    received = t.received(3)
+    t.eq([(r['path'], r['cookie']) for r in received[:3]],
+         [('/__amuleweb/', False), ('/__amuleweb/footer.php', True), ('/__amuleweb/amuleweb-main-dload.php', True)],
+         'login, then the links and the check of the downloads, in the same session')
+    if len(received) >= 2:
+        login, links = received[0], received[1]
+        t.eq(param(login, 'pass'), 'secret', 'the password in the login only')
+        t.eq([param(links, 'pass'), param(links, 'selectcat'), param(links, 'Submit')], [None, 'all', 'Download link'],
+             'links: no password, category 0 sent as "all"')
         t.eq(links_of(param(links, 'ed2klink')), EXPECTED, 'the 9 links')
+    t.eq(len(t.amuleweb_downloads()), 9, 'the 9 files in the downloads of aMule')
+    t.eq(len(t.open_pages()), 1, 'no window opened')
+    t.clear_received()
+    mark_link(t, 'Été à Paris (Café).mp3')
+    t.click('#__target')
+    t.eq(wait_status(t), '1 link(s) added to aMule', 'a click on a file name sends it the same way')
+    links = [r for r in t.received(2) if r['path'] == '/__amuleweb/footer.php']
+    t.eq(links_of(param(links[0], 'ed2klink')) if links else None, {e for e in EXPECTED if e[0] == 'Été à Paris (Café).mp3'},
+         'that link only, no window')
+
+
+def test_amule_answers(t):
+    """SF-7.13: password refused, links not found in the downloads (orange: they may still be added),
+    the downloads not read once the links are sent (orange too), no aMule 2.x at this address, aMule
+    unreachable."""
+    cases = [({}, {'emulePwd': 'wrong'}, 'aMule refused the password', 'rgb(204, 0, 0)'),
+             ({'drop_links': True}, {}, '0 of 9 link(s) found in the transfer list of aMule: check it', 'rgb(166, 95, 0)'),
+             ({'list_broken': True}, {}, 'Links sent, but the transfer list of aMule could not be read: check it',
+              'rgb(166, 95, 0)'),
+             ({}, {'emuleUrl': 'NOAMULE'}, 'No aMule 2.x web interface at NOAMULE', 'rgb(204, 0, 0)'),
+             ({}, {'emuleUrl': 'http://127.0.0.1:9/'}, 'aMule can not be reached at http://127.0.0.1:9/', 'rgb(204, 0, 0)')]
+    for conf, settings, expected, color in cases:
+        url = t.fake_client_url if settings.get('emuleUrl') == 'NOAMULE' else None
+        t.load(settings=amuleweb_settings(t, **dict(settings, **({'emuleUrl': url} if url else {}))))
+        t.fake_amuleweb(**conf)
+        t.keys('a')
+        t.eq([wait_status(t), t.js("document.getElementById('emlStatus').style.color")],
+             [expected.replace('NOAMULE', url or ''), color], f'{conf or settings}')
+
+
+def test_amule_details(t):
+    """SF-7.13: the category, a name with spaces, accents and &, is encoded as aMule 2.3.3 reads it:
+    the links land in it (sent in plain UTF-8, aMule recognizes no category and drops them); in
+    edit mode the lines that are not ed2k links are not sent; with the popup closed, an error is
+    shown in an alert."""
+    t.load(settings=amuleweb_settings(t, emuleCat='*Vidéo & Co=Vidéo & Co;Audio=Audio'), popup_mode=2)
+    t.js("document.getElementById('editbox').value = '\\n' + eLinks.filter(function (l) {"
+         "return l.indexOf('Paris') >= 0; }).join('\\n') + '\\na note typed by hand\\n'")
+    t.keys('a')
+    t.eq(wait_status(t), '1 link(s) added to aMule', 'the link of the edit box only')
+    links = [r for r in t.received(3) if r['path'] == '/__amuleweb/footer.php']
+    if links:
+        t.eq(param(links[0], 'selectcat'), 'Vidéo & Co'.encode('utf-8').decode('latin-1'), 'category as aMule reads it')
+        t.eq(param(links[0], 'ed2klink').split('\n')[0].startswith('ed2k://'), True, 'no empty line first')
+        t.eq(len(param(links[0], 'ed2klink').split('\n')), 1, 'no text line')
+    t.eq(t.amuleweb_categories(), ['Vidéo & Co'], 'the link in the accented category')
+    t.load(settings=amuleweb_settings(t, emulePwd='wrong'), popup_mode=0)
+    t.keys('a')
+    end = time.time() + 6
+    while time.time() < end and not t.dialogs:
+        t.pump(0.2)
+    t.eq(t.dialogs, ['Emule Linker: aMule refused the password'], 'popup closed: the error in an alert')
+
+
+def test_settings_test_import_amuleweb(t):
+    """SF-8.17 and SF-8.18: Test, for aMule 2.x, logs in and reads its version in its log; Import reads
+    its categories in footer.php, by name (name=name), in its order; nothing is sent."""
+    t.load(settings=amuleweb_settings(t, emuleCat='*Audio=Audio'))
+    t.check(t.open_settings(), 'settings dialog opened')
+    t.click('#GM_config_testBtn')
+    t.eq(api_status(t, 'test'), ['ok', '\u2714 Connected to aMule 2.3.3.'], 'Test: connected, with its version')
+    t.click('#GM_config_importBtn')
+    t.eq(api_status(t, 'import'), ['ok', '\u2714 3 categories imported from aMule: 2 new (all, Vidéo & Co). '
+                                         'Audio stays the default (*).'], 'Import: notice')
+    t.eq(t.js("document.getElementById('GM_config_field_emuleCat').value"), 'all=all;*Audio=Audio;Vidéo & Co=Vidéo & Co',
+         'Import: by name, in the order of aMule, decoded')
+    t.check(not any('ed2klink' in r['query'] for r in t.received(4)), 'no link sent')
+    for fields, expected in (({'emulePwd': 'wrong'}, '\u2716 aMule refused the password'),
+                             ({'emuleUrl': 'NOAMULE'}, '\u2716 No aMule 2.x web interface at NOAMULE')):
+        t.load(settings=amuleweb_settings(t))
+        t.check(t.open_settings(), 'settings dialog opened')
+        url = t.fake_client_url if fields.get('emuleUrl') == 'NOAMULE' else None
+        for key, value in dict(fields, **({'emuleUrl': url} if url else {})).items():
+            t.set_field(key, value)
+        t.click('#GM_config_testBtn')
+        t.eq(api_status(t, 'test'), ['ko', expected.replace('NOAMULE', url or '')], f'Test, {fields}')
+
+
+def test_amule_category_with_equal(t):
+    """SF-6.5, SF-8.18: an aMule 2.x category named A=B: Import keeps its name in the value (A B=A=B),
+    and the links sent in it land in it (sent as "A B", aMule 2.3.3 drops them)."""
+    t.load(settings=amuleweb_settings(t, emuleCat='*all=all'))
+    t.fake_amuleweb(categories=['all', 'A=B'])
+    t.check(t.open_settings(), 'settings dialog opened')
+    t.click('#GM_config_importBtn')
+    api_status(t, 'import')
+    t.eq(t.js("document.getElementById('GM_config_field_emuleCat').value"), '*all=all;A B=A=B', 'Import: A=B kept in the value')
+    t.load(settings=amuleweb_settings(t, emuleCat='*A B=A=B'))
+    t.fake_amuleweb(categories=['all', 'A=B'])
+    t.keys('a')
+    t.eq(wait_status(t), '9 link(s) added to aMule', 'the links added')
+    links = [r for r in t.received(3) if r['path'] == '/__amuleweb/footer.php']
+    t.eq(param(links[0], 'selectcat') if links else None, 'A=B', 'sent in A=B')
+    t.eq(t.amuleweb_categories(), ['A=B'], 'the links in the category A=B')
+
+
+def test_amule_category_with_semicolon(t):
+    """SF-6.5, SF-8.18: an aMule 2.x category whose name holds a ; (test;23, accepted by aMule 2.3.3):
+    Import writes it test 23=test\\;23, and the links sent in it land in it (sent as "test 23", aMule
+    drops them)."""
+    t.load(settings=amuleweb_settings(t, emuleCat='*all=all'))
+    t.fake_amuleweb(categories=['all', 'test;23'])
+    t.check(t.open_settings(), 'settings dialog opened')
+    t.click('#GM_config_importBtn')
+    api_status(t, 'import')
+    t.eq(t.js("document.getElementById('GM_config_field_emuleCat').value"), '*all=all;test 23=test\\;23',
+         'Import: the ; written \\; in the value')
+    t.load(settings=amuleweb_settings(t, emuleCat='*test 23=test\\;23'))
+    t.fake_amuleweb(categories=['all', 'test;23'])
+    t.eq(t.js("[].map.call(document.querySelectorAll('#cat option'), function (o) { return o.textContent; })"),
+         ['test 23'], 'the popup shows the name')
+    t.keys('a')
+    t.eq(wait_status(t), '9 link(s) added to aMule', 'the links added')
+    links = [r for r in t.received(3) if r['path'] == '/__amuleweb/footer.php']
+    t.eq(param(links[0], 'selectcat') if links else None, 'test;23', 'sent in test;23')
+    t.eq(t.amuleweb_categories(), ['test;23'], 'the links in the category test;23')
 
 
 # ---- aMule 3.1 (amuleapi) --------------------------------------------------------------
@@ -340,10 +589,10 @@ def test_amuleapi_slow_answer(t):
     did not answer in time, not that it can not be reached: the links may well be added."""
     # time measured on aMule 3.1.0: 8.1 s for 500 links, 77.3 s for 2,000 links; twice that at least
     for count, measured in ((500, 8.1), (2000, 77.3)):
-        limit = t.call('amuleApiTimeout', count)
+        limit = t.call('sendingTimeout', count)
         t.check(limit >= 2 * measured * 1000, f'time limit for {count} links: at least twice {measured} s', limit)
     t.load(settings=amuleapi_settings(t))
-    t.js('amuleApiTimeout = function () { return 1000; }')      # 1 s, for the test
+    t.js('sendingTimeout = function () { return 1000; }')      # 1 s, for the test
     t.amuleapi(delay=3)
     click_add_all(t)
     end = time.time() + 6
@@ -488,14 +737,18 @@ def test_settings_api_buttons(t):
     t.check(t.open_settings(), 'settings dialog opened')
     t.eq(t.js(shown), [True, True], 'aMule 3.x: Test and Import shown')
     t.eq(t.js("[document.getElementById('GM_config_testBtn').title, document.getElementById('GM_config_importBtn').title]"),
-         ['Test the server URL and the password', 'Fill the field with the categories of aMule'], 'tooltips')
+         ['Test the server URL and the password', 'Fill the field with the categories of eMule or aMule'], 'tooltips')
     t.eq(t.js(style), ['11px 2px 8px'] * 3, 'the style of Show')
     test, imp, url = right_edges(t, '#GM_config_testBtn', '#GM_config_importBtn', '#GM_config_field_emuleUrl')
     t.check(aligned(test, imp, url), 'Test and Import on the right edge of the fields', [test, imp, url])
     t.js("var s = document.getElementById('GM_config_field_serverMethod'); s.value = 'emule'; s.dispatchEvent(new Event('change'))")
-    t.eq(t.js(shown), [False, False], 'eMule: no Test, no Import')
+    t.eq(t.js(shown), [True, True], 'eMule: Test and Import')
+    t.js("var s = document.getElementById('GM_config_field_serverMethod'); s.value = 'custom'; s.dispatchEvent(new Event('change'))")
+    t.eq(t.js(shown), [False, False], 'Custom: no Test, no Import')
     cat, url = right_edges(t, '#GM_config_field_emuleCat', '#GM_config_field_emuleUrl')
-    t.check(aligned(cat, url), 'eMule: the Category field as wide as the Server URL', [cat, url])
+    t.check(aligned(cat, url), 'Custom: the Category field as wide as the Server URL', [cat, url])
+    t.js("var s = document.getElementById('GM_config_field_serverMethod'); s.value = 'mldonkey'; s.dispatchEvent(new Event('change'))")
+    t.eq(t.js(shown), [True, False], 'MLDonkey: Test, no Import (no categories)')
     t.js("var s = document.getElementById('GM_config_field_serverMethod'); s.value = 'amuleapi'; s.dispatchEvent(new Event('change'))")
     t.eq(t.js(shown), [True, True], 'back to aMule 3.x: shown again')
 
@@ -621,24 +874,152 @@ def test_settings_import_answers(t):
              [before, False], 'field unchanged, no Undo')
 
 
+def test_settings_test_emule(t):
+    """SF-8.16 and SF-8.17: Test, for eMule, logs in to its web interface with the address and the
+    password typed, then logs out; nothing is sent. The answers: connected (with its version),
+    password refused, no eMule at this address, eMule unreachable."""
+    t.load(settings=client(t, 'emule', emulePwd='old'))
+    t.check(t.open_settings(), 'settings dialog opened')
+    t.set_field('emulePwd', 'secret')       # typed, not saved
+    t.click('#GM_config_testBtn')
+    t.eq(api_status(t, 'test'), ['ok', '\u2714 Connected to eMule 0.70b x64.'], 'connected, with its version')
+    received = t.received(2)
+    t.eq([(param(r, 'w'), param(r, 'p'), param(r, 'ses'), param(r, 'c')) for r in received],
+         [('password', 'secret', None, None), ('logout', None, '123456789', None)], 'login, then logout, no link sent')
+    t.eq(t.stored_settings().get('emulePwd'), 'old', 'nothing saved')
+    for fields, expected in (({'emulePwd': 'wrong'}, '\u2716 eMule refused the password'),
+                             ({'emuleUrl': 'NOEMULE'}, '\u2716 No eMule web interface at NOEMULE'),
+                             ({'emuleUrl': 'http://127.0.0.1:9/'}, '\u2716 eMule can not be reached at http://127.0.0.1:9/')):
+        t.load(settings=client(t, 'emule'))
+        t.check(t.open_settings(), 'settings dialog opened')
+        url = t.base + '/__nolinks/' if fields.get('emuleUrl') == 'NOEMULE' else fields.get('emuleUrl')
+        for key, value in dict(fields, **({'emuleUrl': url} if url else {})).items():
+            t.set_field(key, value)
+        t.click('#GM_config_testBtn')
+        t.eq(api_status(t, 'test'), ['ko', expected.replace('NOEMULE', url or '')], f'{fields}')
+
+def test_settings_import_emule(t):
+    """SF-8.18: Import, for eMule, logs in to its web interface, reads its categories in the list of
+    its form to add a link (its order, All=0, accents and entities decoded), then logs out; nothing
+    is sent. The answers: password refused, no eMule at this address."""
+    t.load(settings=client(t, 'emule', emuleCat='*Video=2;Audio=1'))
+    t.check(t.open_settings(), 'settings dialog opened')
+    t.click('#GM_config_importBtn')
+    t.eq(api_status(t, 'import'), ['ok', '\u2714 5 categories imported from eMule: 3 new (All, R&D, Testé). '
+                                         'Video stays the default (*).'], 'notice')
+    t.eq(t.js("document.getElementById('GM_config_field_emuleCat').value"), 'All=0;Audio=1;*Video=2;R&D=3;Testé=4',
+         'field filled in the order of eMule, the names decoded')
+    received = t.received(2)
+    t.eq([(param(r, 'w'), param(r, 'ses'), param(r, 'c')) for r in received],
+         [('password', None, None), ('logout', '123456789', None)], 'login, then logout, no link sent')
+    t.click('#GM_config_importUndoBtn')
+    t.eq(t.js("document.getElementById('GM_config_field_emuleCat').value"), '*Video=2;Audio=1', 'Undo')
+    for fields, expected in (({'emulePwd': 'wrong'}, '\u2716 eMule refused the password'),
+                             ({'emuleUrl': 'NOEMULE'}, '\u2716 No eMule web interface at NOEMULE')):
+        t.load(settings=client(t, 'emule'))
+        t.check(t.open_settings(), 'settings dialog opened')
+        url = t.base + '/__nolinks/' if fields.get('emuleUrl') == 'NOEMULE' else None
+        for key, value in dict(fields, **({'emuleUrl': url} if url else {})).items():
+            t.set_field(key, value)
+        t.click('#GM_config_importBtn')
+        t.eq(api_status(t, 'import'), ['ko', expected.replace('NOEMULE', url or '')], f'{fields}')
+
+
 def json_servers(t):
     raw = t.gm('servers')
     return [] if raw is None else json.loads(raw)['list']
 
 
-# ---- MLDonkey and custom server --------------------------------------------------------
-def test_mldonkey(t):
-    """SF-7 (mldonkey): one GET on submit, with the multidllink command."""
-    t.load(settings=client(t, 'mldonkey'))
+# ---- MLDonkey ---------------------------------------------------------------------------
+def mldonkey_settings(t, **changes):
+    settings = client(t, 'mldonkey', emuleUrl=t.fake_mldonkey_url, emuleUser='admin')
+    settings.update(changes)
+    return settings
+
+
+def basic(user, password):
+    import base64
+    return 'Basic ' + base64.b64encode(f'{user}:{password}'.encode('utf-8')).decode()
+
+
+def test_mldonkey_silent_sending(t):
+    """SF-7.14: no window: one GET of the links, with HTTP Basic (the user and the password of the
+    settings), the answer of MLDonkey shown; a click on a file name sends it the same way."""
+    t.load(settings=mldonkey_settings(t))
     t.keys('a')
+    t.eq(wait_status(t), '9 link(s) added to MLDonkey', 'the answer shown in the popup')
     received = t.received(1)
     t.eq(len(received), 1, 'one request')
     if received:
         r = received[0]
-        t.eq(r['path'], '/__emule/submit', 'MLDonkey web interface')
-        t.eq(param(r, 'jvcmd'), 'multidllink', 'jvcmd=multidllink')
+        t.eq([r['path'], param(r, 'jvcmd'), r['auth']], ['/__mldonkey/submit', 'multidllink', basic('admin', 'secret')],
+             'multidllink, with HTTP Basic')
         t.eq(links_of(param(r, 'links')), EXPECTED, 'the 9 links')
+    t.eq([len(t.mldonkey_downloads()), len(t.open_pages())], [9, 1], 'the 9 files in MLDonkey, no window opened')
+    t.clear_received()
+    t.fake_mldonkey(downloads=[])
+    mark_link(t, 'Été à Paris (Café).mp3')
+    t.click('#__target')
+    t.eq(wait_status(t), '1 link(s) added to MLDonkey', 'a click on a file name sends it the same way')
+    received = t.received(1)
+    t.eq(links_of(param(received[0], 'links')) if received else None,
+         {e for e in EXPECTED if e[0] == 'Été à Paris (Café).mp3'}, 'that link only, no window')
 
+
+def test_mldonkey_answers(t):
+    """SF-7.14: the user or the password refused (401), an MLDonkey without a password (its user with an
+    empty one, as MLDonkey 3.2.1 accepts it), links already there (counted as added), a link refused,
+    no MLDonkey at this address, MLDonkey unreachable; with the popup closed, an alert."""
+    cases = [({'password': ''}, {'emulePwd': ''}, '9 link(s) added to MLDonkey', 'rgb(0, 102, 0)'),
+             ({}, {'emulePwd': 'wrong'}, 'MLDonkey refused the user or the password', 'rgb(204, 0, 0)'),
+             ({}, {'emuleUser': 'bob'}, 'MLDonkey refused the user or the password', 'rgb(204, 0, 0)'),
+             ({'downloads': [e[2] for e in EXPECTED]}, {}, '9 link(s) added to MLDonkey', 'rgb(0, 102, 0)'),
+             ({}, {'emuleUrl': 'NOMLDONKEY'}, 'No MLDonkey web interface at NOMLDONKEY', 'rgb(204, 0, 0)'),
+             ({}, {'emuleUrl': 'http://127.0.0.1:9/'}, 'MLDonkey can not be reached at http://127.0.0.1:9/', 'rgb(204, 0, 0)')]
+    for conf, settings, expected, color in cases:
+        url = t.fake_client_url if settings.get('emuleUrl') == 'NOMLDONKEY' else None
+        t.load(settings=mldonkey_settings(t, **dict(settings, **({'emuleUrl': url} if url else {}))))
+        t.fake_mldonkey(**conf)
+        t.keys('a')
+        t.eq([wait_status(t), t.js("document.getElementById('emlStatus').style.color")],
+             [expected.replace('NOMLDONKEY', url or ''), color], f'{conf or settings}')
+    t.load(settings=mldonkey_settings(t), popup_mode=2)
+    t.js("document.getElementById('editbox').value = eLinks[0] + '\\nGARBAGE\\ned2k://|file|x|abc|/'")
+    t.keys('a')
+    t.eq(wait_status(t), '1 link(s) added to MLDonkey, 1 refused', 'edit box: a malformed ed2k link refused, the text left out')
+    t.load(settings=mldonkey_settings(t, emulePwd='wrong'), popup_mode=0)
+    t.keys('a')
+    end = time.time() + 6
+    while time.time() < end and not t.dialogs:
+        t.pump(0.2)
+    t.eq(t.dialogs, ['Emule Linker: MLDonkey refused the user or the password'], 'popup closed: the error in an alert')
+
+
+def test_settings_mldonkey(t):
+    """SF-8.9, SF-8.16 and SF-8.17: MLDonkey has a User field (admin by default) and the Password, and
+    Test, no Import (no categories); Test asks its version with the user and the password typed.
+    A server stored by an older version, without a user, shows the default one."""
+    old = ('{"active":"srv1","list":[{"id":"srv1","name":"Old MLDonkey","method":"mldonkey",'
+           '"emuleUrl":"%s","emulePwd":"secret","emuleCat":"*default=0;"}]}')
+    t.load(settings=mldonkey_settings(t))
+    t.js(f"localStorage.setItem('gm:servers', {json.dumps(json.dumps(old % t.fake_mldonkey_url))})")
+    t.reload()
+    t.check(t.open_settings(), 'settings dialog opened')
+    shown = ("['GM_config_emuleUser_var','GM_config_emulePwd_var','GM_config_testBtn','GM_config_importBtn']"
+             ".map(function(id){return document.getElementById(id).offsetParent != null;})")
+    t.eq(t.js(shown), [True, True, True, False], 'User, Password and Test, no Import')
+    t.eq(t.js("document.getElementById('GM_config_field_emuleUser').value"), 'admin', 'an older server: the default user')
+    t.click('#GM_config_testBtn')
+    t.eq(api_status(t, 'test'), ['ok', '\u2714 Connected to MLDonkey 3.2.1.'], 'Test: connected, with its version')
+    t.eq(t.received(1)[-1]['auth'], basic('admin', 'secret'), 'Test: HTTP Basic with the user and the password typed')
+    t.set_field('emuleUser', 'bob')
+    t.click('#GM_config_testBtn')
+    t.eq(api_status(t, 'test'), ['ko', '\u2716 MLDonkey refused the user or the password'], 'Test: a wrong user')
+    t.js("var s = document.getElementById('GM_config_field_serverMethod'); s.value = 'emule'; s.dispatchEvent(new Event('change'))")
+    t.eq(t.js(shown), [False, True, True, True], 'eMule: no User field')
+
+
+# ---- custom server --------------------------------------------------------
 
 def test_custom_server(t):
     """SF-7 (custom) and SF-7.3: a POST form with the category, the page and the links."""

@@ -9,6 +9,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Up to 0.7, the script was published on userscripts.org (script 154608). It moved to GitHub in 2014.
 
+## [0.12] - 2026-10-14
+
+### Added
+
+- Settings dialog, eMule: the **Test** button checks the Server URL and the password before saving them, and gives the version of eMule; the **Import** button fills the Category field with the categories of eMule, in its order, the default one kept, with Undo.
+- Settings dialog, aMule 2.x: the **Test** button (with the version of aMule, read in its log) and the **Import** button (its categories, by name).
+- Settings dialog, MLDonkey: a **User** field (`admin` by default) and the Password, and the **Test** button.
+- Tests: live tests against a real aMule 2.x (`--live-amuleweb`, `AMULEWEB_URL`) and a real MLDonkey (`--live-mldonkey`, `MLDONKEY_URL`).
+- `.editorconfig`: the indentation of the files (tabs in the JavaScript, spaces in the other files), checked by the tests.
+
+### Changed
+
+- **eMule (web)**: the links are sent without opening any window, and the answer of eMule is shown in the popup: links added, password refused, eMule unreachable or answering too late. While eMule answers, the popup shows "Please wait" and the **Add all links** buttons are disabled. Nothing is left in the browser history. At the first sending, Tampermonkey asks to allow the address of eMule.
+- **aMule 2.x (amuleweb)**: the links are sent without opening any window, and without the fixed wait of 1 second: the login is awaited, then the links are sent in the same session, and looked for in the downloads of aMule, the result shown in the popup (in orange when they are not all found, or when the downloads cannot be read). The category name is now encoded in the request, a name with accents as aMule 2.3.3 reads it: sent otherwise, aMule recognizes no category and drops the links without any message.
+- **MLDonkey (web)**: the links are sent without opening any window, with the user and the password of the settings: they are no longer typed in the dialog of the browser at each sending. The answer of MLDonkey is shown in the popup (links added, refused, user or password refused). Only the Custom method still opens a tab, to post its form.
+- Tests: a fake eMule that answers as eMule 0.70b does, and the live test checks the answer shown and the Test button.
+- Code: one indentation in the whole script, tabs (the embedded GM_config library keeps its own spaces).
+
+### Removed
+
+- Dead code: `sleep()` and `refreshLinkUrls()`, no longer needed once eMule and aMule 2.x are sent without a window.
+
+### Fixed
+
+- Settings dialog and popup: on a page that centers its text, as some forums do, the explanations of the fields, the names and addresses of the servers and the file names of the popup were centered too. The text styles of the page (alignment, line height, letter spacing, capitals, indent, italics) no longer reach them.
+- eMule (web): a password holding `&`, `#` or `+` was cut or changed in the request, and refused by eMule: it is now encoded, the category too.
+- aMule 2.x: a category whose name holds an equals sign (`=`) or a semicolon (`;`), such as `A=B` or `test;23`, could not be written in the Category field, and once imported it matched no category of aMule, which dropped the links. The value of a category is now everything after its first `=`, a `;` is written `\;` (`A B=A=B`, `test 23=test\;23`), and Import writes them so.
+
 ## [0.11] - 2026-10-11
 
 ### Added
@@ -181,6 +209,7 @@ Up to 0.7, the script was published on userscripts.org (script 154608). It moved
 
 - First version.
 
+[0.12]: https://github.com/alo0/GM_EmuleLinker/compare/v0.11...v0.12
 [0.11]: https://github.com/alo0/GM_EmuleLinker/compare/v0.10...v0.11
 [0.10]: https://github.com/alo0/GM_EmuleLinker/compare/v0.9...v0.10
 [0.9]: https://github.com/alo0/GM_EmuleLinker/releases/tag/v0.9

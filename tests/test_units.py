@@ -79,7 +79,8 @@ def test_encodeEd2kLink(t):
 
 
 def test_strToCat(t):
-    """SF-6.5 and SF-6.7: invalid entries skipped, exactly one default."""
+    """SF-6.5 and SF-6.7: invalid entries skipped, exactly one default; the value is everything after
+    the first = (an aMule 2.x category named A=B), a ; written \\; in a name or a value (test;23)."""
     t.load()
 
     def cats(*entries):
@@ -95,23 +96,36 @@ def test_strToCat(t):
         ('*Audio=1;*Video=2', cats(('Audio', '1', 1), ('Video', '2', 0))),     # two *
         ('BD=BD;*Manga=Manga', cats(('BD', 'BD', 0), ('Manga', 'Manga', 1))),
         ('*Audio = 1 ; Video = 2', cats(('Audio', '1', 1), ('Video', '2', 0))),  # spaces
+        ('A B=A=B;*all=all', cats(('A B', 'A=B', 0), ('all', 'all', 1))),        # = in the value
+        ('test 23=test\\;23;*all=all', cats(('test 23', 'test;23', 0), ('all', 'all', 1))),  # \; in the value
+        ('*a\\;b=1', cats(('a;b', '1', 1))),                                     # \; in the name
     ]
     for text, expected in cases:
         t.eq(t.call('strToCat', text), expected, f'strToCat({text!r})')
 
 
 def test_catToStr(t):
-    """Categories back to the settings text, and the round trip."""
+    """Categories back to the settings text, a ; written \\;, and the round trip."""
     t.load()
     categories = [{'name': 'Audio', 'value': '1', 'select': 1},
-                  {'name': 'Video', 'value': '2', 'select': 0}]
+                  {'name': 'Video', 'value': '2', 'select': 0},
+                  {'name': 'test 23', 'value': 'test;23', 'select': 0}]
     text = t.call('catToStr', categories)
-    t.eq(text, '*Audio=1;Video=2;', 'catToStr')
+    t.eq(text, '*Audio=1;Video=2;test 23=test\\;23;', 'catToStr')
     t.eq(t.call('strToCat', text), categories, 'strToCat(catToStr(x)) == x')
 
 
-def test_mergeAmuleCategories(t):
-    """SF-8.18: the categories of aMule in its order, the category 0 under its own name, the
+def test_amuleWebCategory(t):
+    """SF-7.13: the category of aMule 2.x, encoded as amuleweb 2.3.3 reads it (its UTF-8 bytes taken
+    as characters): unchanged without accents."""
+    t.load()
+    for name, expected in (('BD', 'BD'), ('all', 'all'), ('Vidéo & Co', 'Vid%C3%83%C2%A9o%20%26%20Co'),
+                           ('2ème Catégorie', '2%C3%83%C2%A8me%20Cat%C3%83%C2%A9gorie')):
+        t.eq(t.call('amuleWebCategory', name), expected, f'amuleWebCategory({name!r})')
+
+
+def test_mergeCategories(t):
+    """SF-8.18: the categories of the client (aMule, eMule) in its order, the category 0 under its own name, the
     default one kept by its name (whatever the case) or else the first one, the names cleaned
     of the syntax of the field; Default=0 when aMule has none."""
     t.load()
@@ -138,9 +152,19 @@ def test_mergeAmuleCategories(t):
         ([{'index': 3, 'name': 'Video'}, {'index': 1, 'name': 'Audio'}], '*Audio=1', 'Video=3;*Audio=1',
          None),                                                                   # the order of aMule
     ]
+    # eMule: its category 0 is named All; an accent; the client named in the message
+    merged = t.call('mergeCategories', cats('All', 'BD', 'Testé'), '*default=0;BD=1', 'eMule')
+    t.eq(merged, {'value': '*All=0;BD=1;Testé=2',
+                  'message': '3 categories imported from eMule: 2 new (All, Testé), 1 removed (default). All is now the default (*).'},
+         'eMule: All=0, the accent kept, eMule named')
+    # aMule 2.x: the categories known by their name, the value being the name: an = kept in it, a ;
+    # written \\; (the separator of the field); the name shown without them
+    merged = t.call('mergeCategories', [{'index': n, 'name': n} for n in ('all', 'Vidéo', 'A;B', 'A=B')], '*Vidéo=Vidéo',
+                    'aMule', True)
+    t.eq(merged['value'], 'all=all;*Vidéo=Vidéo;A B=A\\;B;A B=A=B', 'aMule 2.x: name=name, the default kept')
     for categories, current, value, message in cases:
-        merged = t.call('mergeAmuleCategories', categories, current)
-        t.eq(merged['value'], value, f'mergeAmuleCategories({[c["name"] for c in categories]}, {current!r})')
+        merged = t.call('mergeCategories', categories, current)
+        t.eq(merged['value'], value, f'mergeCategories({[c["name"] for c in categories]}, {current!r})')
         if message is not None:
             t.eq(merged['message'], message, f'message for {current!r}')
 

@@ -9,6 +9,10 @@
                                              (EMULE_PASSWORD needed, see test_live_emule.py)
     python tests/run_tests.py --live-amule   run the live test against a real aMule 3.1
                                              (AMULE_URL needed, see test_live_amule.py)
+    python tests/run_tests.py --live-amuleweb   run the live test against a real aMule 2.x
+                                             (AMULEWEB_URL needed, see test_live_amuleweb.py)
+    python tests/run_tests.py --live-mldonkey   run the live test against a real MLDonkey
+                                             (MLDONKEY_URL needed, see test_live_mldonkey.py)
 
 The userscript is injected unchanged into the served pages, after a small
 stand-in for the GM_* API (gm_shim.js): Tampermonkey is not needed. Chrome is
@@ -18,7 +22,13 @@ the alerts are caught. Python standard library only.
 
 Set CHROME_PATH or FIREFOX_PATH if a browser is not found automatically.
 """
+import base64
+import copy
 import functools
+import gzip
+import html
+import http.client
+import http.cookiejar
 import http.server
 import inspect
 import json
@@ -33,6 +43,7 @@ import threading
 import time
 import traceback
 import urllib.error
+import zlib
 import urllib.request
 from urllib.parse import parse_qs, urlsplit
 
@@ -49,10 +60,13 @@ import test_scenarios               # noqa: E402
 import test_sending                 # noqa: E402
 import test_live_emule              # noqa: E402
 import test_live_amule              # noqa: E402
+import test_live_amuleweb           # noqa: E402
+import test_live_mldonkey           # noqa: E402
 
 TEST_MODULES = [test_repository, test_units, test_scenarios, test_sending]
 # the live tests, each only with its option, against a real ed2k client
-LIVE_MODULES = {'--live-emule': test_live_emule, '--live-amule': test_live_amule}
+LIVE_MODULES = {'--live-emule': test_live_emule, '--live-amule': test_live_amule,
+                '--live-amuleweb': test_live_amuleweb, '--live-mldonkey': test_live_mldonkey}
 
 # Pages served besides the files of the repository
 EXTRA_PAGES = {
@@ -78,6 +92,24 @@ AMULEAPI = {'password': 'secret', 'token': 'fake-token', 'login_status': None,
                            {'index': 2, 'name': 'Video'}, {'index': 3, 'name': 'Documents'},
                            {'index': 4, 'name': 'Software'}],
             'page_size': 100}
+
+# Default behavior of the fake eMule (Handler._fake_client), changed by T.fake_emule(): password
+# expected, seconds before its answer, a forced answer to the sending (None: the normal one)
+# answer, and its categories, as the list of its form to add a link shows them
+EMULE_FAKE = {'password': 'secret', 'delay': 0, 'answer': None,
+              'categories': [('0', 'All'), ('1', 'Audio'), ('2', 'Video'), ('3', 'R&D'), ('4', 'Testé')]}
+
+# Default behavior of the fake amuleweb of aMule 2.x (Handler._fake_amuleweb), changed by
+# T.fake_amuleweb(): password, categories (names, as aMule 2.x knows them), version written in its
+# log, links dropped (aMule answers but does not add them), list of the downloads broken (the
+# connection closed without an answer), and its state: the sessions logged in,
+# the hashes of its downloads, the category of each one
+AMULEWEB_FAKE = {'password': 'secret', 'categories': ['all', 'Audio', 'Vidéo & Co'], 'version': '2.3.3',
+                 'drop_links': False, 'list_broken': False, 'sessions': set(), 'downloads': [], 'download_cats': {}}
+
+# Default behavior of the fake MLDonkey (Handler._fake_mldonkey), changed by T.fake_mldonkey(): its
+# user and password (HTTP Basic), and its state: the hashes of its downloads
+MLDONKEY_FAKE = {'user': 'admin', 'password': 'secret', 'downloads': []}
 
 # Injected in every page except /__blank. The script is added as a <script> element
 # so that it runs in the page scope, its functions and variables being reachable by
@@ -110,12 +142,38 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    # The fake eMule answers as eMule 0.70b does (probed): to the sending (w=password with c=), a
+    # short XML status; to the login alone (Test), its interface with a session, or its login page
+    # again when the password is wrong. Its behavior is set by each test through T.fake_emule().
+    emule = {}
+
     def _fake_client(self, body=''):
         url = urlsplit(self.path)
-        Handler.received.append({'method': self.command, 'path': url.path,
-                                 'query': parse_qs(url.query, keep_blank_values=True),
+        query = parse_qs(url.query, keep_blank_values=True)
+        Handler.received.append({'method': self.command, 'path': url.path, 'query': query,
                                  'form': parse_qs(body, keep_blank_values=True),
                                  'time': time.time()})
+        conf = Handler.emule
+        if url.path == '/__emule/' and query.get('w') == ['password']:
+            time.sleep(conf['delay'])
+            right = query.get('p', [''])[0] == conf['password']
+            if 'c' in query:
+                if conf['answer'] is not None:
+                    return self._send_html(conf['answer'])
+                if not right:
+                    return self._send_html('<status result="FAILED" reason="WRONG_PASSWORD"><description>'
+                                           'Link not added. Wrong password.</description></status>')
+                return self._send_html('<status result="OK"><description>Link added: </description><filename>'
+                                       + html.escape(query['c'][0]) + '</filename></status>')
+            if right:
+                return self._send_html('<html><head><title>eMule 0.70b x64 - Web Interface</title></head>'
+                                       '<body><a href="?ses=123456789&amp;w=transfer">Transfers</a>'
+                                       '<form action=""><select name="cat" size="1">'
+                                       + ''.join(f'<option value="{i}">{html.escape(n)}</option>' for i, n in conf['categories'])
+                                       + '</select></form></body></html>')
+            return self._send_html('<html><head><title>eMule 0.70b x64 - Web Interface</title></head><body>'
+                                   '<form action="" method="POST" name="login"><input type="password" name="p">'
+                                   '<input type="hidden" name="w" value="password"></form></body></html>')
         self._send_html('<!doctype html><title>fake ed2k client</title>ok')
 
     def _send_json(self, status, answer=None, headers=None):
@@ -192,25 +250,144 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                                          'offset': offset, 'limit': limit})
         self._send_json(404, {'error': {'code': 'not_found', 'message': 'not found'}})
 
+    # The fake amuleweb (aMule 2.x), under /__amuleweb: as aMule 2.3.3 does (probed), a session kept by
+    # a cookie, opened by ?pass=; footer.php adds the links of ed2klink, and answers its form again;
+    # amuleweb-main-dload.php lists the downloads, a checkbox named after each hash; log.php starts
+    # with the version. Its behavior is set by each test through T.fake_amuleweb().
+    amuleweb = {}
+
+    def _fake_amuleweb(self, body):
+        url = urlsplit(self.path)
+        path = url.path[len('/__amuleweb'):] or '/'
+        query = parse_qs(url.query, keep_blank_values=True)
+        form = parse_qs(body, keep_blank_values=True)
+        cookie = re.search(r'amuleweb_session_id=(\d+)', self.headers.get('Cookie') or '')
+        session = cookie.group(1) if cookie else str(int(time.time() * 1000) % 1000000000)
+        Handler.received.append({'method': self.command, 'path': url.path, 'query': query, 'form': form,
+                                 'cookie': bool(cookie), 'time': time.time()})
+        conf = Handler.amuleweb
+        page = '<html><head><title>aMule control panel</title></head><body>%s</body></html>'
+        login = page % ('<form action="" method="post" name="login">Enter password : '
+                        '<input name="pass" size="20" value="" type="password"></form>')
+        if 'pass' in query:
+            if query['pass'][0] != conf['password']:
+                return self._send_amuleweb(login, session)
+            conf['sessions'].add(session)
+            return self._send_amuleweb(page % '<META http-EQUIV="Refresh" CONTENT="0; url=amuleweb-main-dload.php">', session)
+        if session not in conf['sessions']:
+            return self._send_amuleweb(login, session)
+        if path == '/footer.php':
+            # as aMule 2.3.3 does: the category received is compared with its names as read in Latin-1
+            # (a name with accents is recognized only when sent so); no category recognized, the
+            # links are dropped without any message
+            known = {c.encode('utf-8').decode('latin-1'): c for c in conf['categories']}
+            category = known.get(query.get('selectcat', [None])[0])
+            if 'ed2klink' in query and category is not None and not conf['drop_links']:
+                for link in query['ed2klink'][0].split('\n'):
+                    fields = link.split('|')
+                    if len(fields) > 4 and fields[4].upper() not in conf['downloads']:
+                        conf['downloads'].append(fields[4].upper())
+                        conf['download_cats'][fields[4].upper()] = category
+            return self._send_amuleweb(page % ('<form name="formlink" method="post" action="footer.php">'
+                                               '<input name="ed2klink" type="text" id="ed2klink" size="50">'
+                                               '<select name="selectcat" id="selectcat">'
+                                               + ''.join(f'<option>{html.escape(c)}</option>' for c in conf['categories'])
+                                               + '</select></form>'), session)
+        if path == '/amuleweb-main-dload.php':
+            if conf['list_broken']:
+                self.close_connection = True     # no answer: an error of the network for the script
+                return
+            if form.get('command') == ['cancel']:
+                conf['downloads'] = [h for h in conf['downloads'] if h not in form]
+            return self._send_amuleweb(page % ('<form action="amuleweb-main-dload.php" method="post" name="mainform">'
+                                               + ''.join(f'<input type="checkbox" name="{h}" >' for h in conf['downloads'])
+                                               + '</form>'), session)
+        if path == '/log.php':
+            return self._send_amuleweb(page % (f'2026-10-11 20:08:24: Logging to stdout enabled<br>'
+                                               f'2026-10-11 20:08:24: Initialising aMuleD {conf["version"]} compiled with '
+                                               f'wxBase(GTK2) v3.2.8 and Boost 1.84<br>'), session)
+        return self._send_amuleweb(page % 'aMule web interface', session)
+
+    def _send_amuleweb(self, text, session):
+        """An answer of amuleweb: its session cookie, the page compressed as aMule 2.3.3 sends it."""
+        data = gzip.compress(text.encode('utf-8'))
+        self.send_response(200)
+        self.send_header('Set-Cookie', f'amuleweb_session_id={session}')
+        self.send_header('Content-Type', 'text/html')
+        self.send_header('Content-Encoding', 'gzip')
+        self.send_header('Content-Length', str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    # The fake MLDonkey, under /__mldonkey: as MLDonkey 3.2.1 does (probed), HTTP Basic on every page
+    # (401 without it); multidllink answers a line per link: "Added link", or "Unable to match URL"
+    # with the reason (already in the download queue, a malformed link); q=version gives its version.
+    # Its behavior is set by each test through T.fake_mldonkey().
+    mldonkey = {}
+
+    def _fake_mldonkey(self):
+        url = urlsplit(self.path)
+        query = parse_qs(url.query, keep_blank_values=True)
+        auth = self.headers.get('Authorization') or ''
+        Handler.received.append({'method': self.command, 'path': url.path, 'query': query, 'form': {},
+                                 'auth': auth, 'time': time.time()})
+        conf = Handler.mldonkey
+        expected = 'Basic ' + base64.b64encode(f"{conf['user']}:{conf['password']}".encode('utf-8')).decode()
+        if auth != expected:
+            data = b'<html><head><title>401 Unauthorized</title></head><body>Unauthorized</body></html>'
+            self.send_response(401)
+            self.send_header('WWW-Authenticate', 'Basic realm="MLdonkey"')
+            self.send_header('Content-Type', 'text/html;charset=UTF-8')
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers()
+            return self.wfile.write(data)
+        page = '<html><head><title>MLdonkey: Web Interface</title></head><body>%s</body></html>'
+        if query.get('jvcmd') == ['multidllink']:
+            lines = []
+            for link in query.get('links', [''])[0].split('\n'):
+                fields = link.split('|')
+                if len(fields) < 6 or not fields[3].isdigit() or len(fields[4]) != 32:
+                    lines.append(f'Unable to match URL {html.escape(link)}<br>Donkey: Exception Failure("Int64.of_string")')
+                elif fields[4].upper() in conf['downloads']:
+                    lines.append(f'Unable to match URL {html.escape(link)}<br>Donkey: File is already in download queue of admin')
+                else:
+                    conf['downloads'].append(fields[4].upper())
+                    lines.append(f'Added link {html.escape(link)}<br>FileTP: Exception Not_found')
+            return self._send_html(page % '<br>'.join(lines))
+        if query.get('q') == ['version']:
+            return self._send_html(page % 'MLNet 3.2.1.git: Multi-Network p2p client (Donkey)')
+        return self._send_html(page % 'No such command')
+
     # GM_xmlhttpRequest of gm_shim.js: the request is made from here, as Tampermonkey makes
-    # it outside the page, so that it is not subject to CORS. Nothing is recorded or printed.
+    # it outside the page, so that it is not subject to CORS. As the browser does, the cookies are
+    # kept from one request to the next (the session of amuleweb), and a compressed answer is
+    # decompressed. Nothing is recorded or printed.
+    cookies = http.cookiejar.CookieJar()
+
     def _gmxhr(self, body):
         d = json.loads(body)
         data = None if d.get('data') is None else d['data'].encode('utf-8')
         request = urllib.request.Request(d['url'], data=data, method=d.get('method', 'GET'),
                                          headers=d.get('headers') or {})
         timeout = (d.get('timeout') or 15000) / 1000
+        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(Handler.cookies))
         try:
             try:
-                with urllib.request.urlopen(request, timeout=timeout) as r:
+                with opener.open(request, timeout=timeout) as r:
                     status, headers, raw = r.status, r.headers, r.read()
             except urllib.error.HTTPError as e:
                 status, headers, raw = e.code, e.headers, e.read()
+            encoding = (headers.get('Content-Encoding') or '').lower()
+            if encoding == 'gzip' or raw[:2] == bytes([0x1f, 0x8b]):
+                raw = gzip.decompress(raw)
+            elif encoding == 'deflate':
+                raw = zlib.decompress(raw, -zlib.MAX_WBITS)
             answer = {'status': status, 'responseText': raw.decode('utf-8', 'replace'),
                       'responseHeaders': ''.join(f'{k}: {v}\r\n' for k, v in headers.items())}
         except (socket.timeout, TimeoutError):
             answer = {'error': 'timeout'}
-        except (urllib.error.URLError, OSError) as e:
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
+            # an answer cut short (aMule 2.3.3 now and then) is a network error for the browser too
             answer = {'error': type(e).__name__}
         self._send_json(200, answer)
 
@@ -220,6 +397,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._fake_client()
         if path.startswith('/__amuleapi'):
             return self._fake_amuleapi('')
+        if path.startswith('/__amuleweb'):
+            return self._fake_amuleweb('')
+        if path.startswith('/__mldonkey'):
+            return self._fake_mldonkey()
         page = EXTRA_PAGES.get(path)
         if page is None:
             return super().do_GET()
@@ -233,6 +414,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._fake_client(body)
         if path.startswith('/__amuleapi'):
             return self._fake_amuleapi(body)
+        if path.startswith('/__amuleweb'):
+            return self._fake_amuleweb(body)
         if path == '/__gmxhr':
             return self._gmxhr(body)
         self.send_error(405)
@@ -500,6 +683,10 @@ class T:
         self.browser.close_other_tabs()
         Handler.received.clear()
         Handler.amuleapi = dict(AMULEAPI)
+        Handler.emule = dict(EMULE_FAKE)
+        Handler.amuleweb = copy.deepcopy(AMULEWEB_FAKE)
+        Handler.mldonkey = copy.deepcopy(MLDONKEY_FAKE)
+        Handler.cookies.clear()
         self._navigate('/__blank')
         seed = {'emule_config': emule_config, 'popup_mode': popup_mode, 'debug_mode': debug,
                 'GM_config': None if settings is None else json.dumps(settings)}
@@ -577,6 +764,42 @@ class T:
     def amuleapi(self, **changes):
         """Change the behavior of the fake amuleapi for this test (see AMULEAPI)."""
         Handler.amuleapi.update(changes)
+
+    def fake_emule(self, **changes):
+        """Change the behavior of the fake eMule for this test (see EMULE_FAKE)."""
+        Handler.emule.update(changes)
+
+    def fake_amuleweb(self, **changes):
+        """Change the behavior of the fake amuleweb of aMule 2.x for this test (see AMULEWEB_FAKE)."""
+        Handler.amuleweb.update(changes)
+
+    @property
+    def fake_amuleweb_url(self):
+        return self.base + '/__amuleweb/'
+
+    def amuleweb_downloads(self):
+        """The hashes of the downloads of the fake amuleweb."""
+        return list(Handler.amuleweb['downloads'])
+
+    def amuleweb_categories(self):
+        """The category of each download of the fake amuleweb, as it recognized it."""
+        return sorted(set(Handler.amuleweb['download_cats'].values()))
+
+    def fake_mldonkey(self, **changes):
+        """Change the behavior of the fake MLDonkey for this test (see MLDONKEY_FAKE)."""
+        Handler.mldonkey.update(changes)
+
+    @property
+    def fake_mldonkey_url(self):
+        return self.base + '/__mldonkey/'
+
+    def mldonkey_downloads(self):
+        """The hashes of the downloads of the fake MLDonkey."""
+        return list(Handler.mldonkey['downloads'])
+
+    def clear_received(self):
+        """Forget the requests received so far by the fake clients, the page staying as it is."""
+        Handler.received.clear()
 
     def received(self, count=None, timeout=4):
         """The requests received by the fake ed2k clients. With count: wait until that

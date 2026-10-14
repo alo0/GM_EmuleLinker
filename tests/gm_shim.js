@@ -31,7 +31,7 @@ function GM_xmlhttpRequest(d) {
 		method: 'POST',
 		headers: {'Content-Type': 'application/json'},
 		body: JSON.stringify({method: d.method || 'GET', url: d.url, headers: d.headers || {},
-		                      data: d.data == null ? null : d.data, timeout: d.timeout || 0})
+			data: d.data == null ? null : d.data, timeout: d.timeout || 0})
 	})
 	.then(function (r) { return r.json(); })
 	.then(function (r) {
@@ -43,7 +43,7 @@ function GM_xmlhttpRequest(d) {
 		}
 		else if (d.onload) {
 			d.onload({status: r.status, responseText: r.responseText,
-			          responseHeaders: r.responseHeaders, finalUrl: d.url});
+				responseHeaders: r.responseHeaders, finalUrl: d.url});
 		}
 	})
 	.catch(function (e) { if (d.onerror) d.onerror({error: String(e)}); });

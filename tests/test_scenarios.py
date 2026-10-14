@@ -21,8 +21,8 @@ NAMES = {'example1.mp3', 'example2.avi', 'Documentary Planet Earth 4K.mp4',
 ROWS = "document.querySelectorAll('#divBody a.ed2k').length"
 SELECTED_CAT = ("(function(){var s=document.getElementById('cat');"
                 "return [s.options[s.selectedIndex].text, s.value]})()")
-SENT_CATS = ("[].map.call(document.querySelectorAll('#divBody a.ed2k'), function (a) {"
-             "var m = a.getAttribute('href').match(/[?&]cat=([^&]*)/); return m ? m[1] : null; })")
+# the category that a sending carries, read from memory (SF-6.6)
+SENT_CATS = "[getSelectedCat()]"
 
 
 def with_emule(**changes):
@@ -33,7 +33,8 @@ def test_detection(t):
     """SF-1: the 9 valid links of test_sample.html, the 2 invalid ones ignored. The page starts
     with the malformed link: the detection goes on after it (SF-1.7)."""
     t.load(settings=EMULE)
-    t.eq(t.js("document.querySelector('a[href^=\"ed2k\"]').getAttribute('href')"), 'ed2k://xxxxxxxx',
+    t.eq(t.js("[].filter.call(document.querySelectorAll('a[href^=\"ed2k\"]'), function (a) {"
+              "return !a.closest('#theDiv'); })[0].getAttribute('href')"), 'ed2k://xxxxxxxx',
          'the first ed2k link of the page is the malformed one')
     t.eq(t.js('eFiles[0]'), 'example1.mp3', 'the first file of the popup: the valid link that follows it')
     t.eq(t.dialogs, [], 'no alert')
@@ -124,8 +125,8 @@ def test_settings_dialog_look(t):
     t.eq(t.js("document.getElementById('GM_config_header').firstChild.textContent"),
          f'Emule Linker {script_version()} — Settings', 'title with the version')
     tooltips = "document.querySelectorAll('#GM_config .config_var[title]').length"
-    t.eq(t.js("document.querySelectorAll('#GM_config .config_var .help').length"), 11, 'a help for each field')
-    t.eq(t.js(tooltips), 11, 'helps hidden: each one is the tooltip of its row')
+    t.eq(t.js("document.querySelectorAll('#GM_config .config_var .help').length"), 12, 'a help for each field (User included, 0.12)')
+    t.eq(t.js(tooltips), 12, 'helps hidden: each one is the tooltip of its row')
     shown = ("[].filter.call(document.querySelectorAll('#GM_config .help'), function (h) {"
              "return getComputedStyle(h).display != 'none'; }).length")
     help_btn = "document.getElementById('GM_config_helpBtn').textContent"
@@ -133,23 +134,25 @@ def test_settings_dialog_look(t):
     t.js(f"{field('emuleCat')}.focus()")
     t.eq(t.js(shown), 0, 'nothing shown on focus: the fields do not move')
     t.click('#GM_config_helpBtn')
-    t.eq([t.js(shown), t.js(help_btn)], [11, 'Hide help'], 'Help button: every help shown')
+    t.eq([t.js(shown), t.js(help_btn)], [12, 'Hide help'], 'Help button: every help shown')
     t.eq(t.js(tooltips), 0, 'helps shown: no tooltip repeating them')
-    edges = ("(function(n){var f=document.getElementById('GM_config_field_'+n).getBoundingClientRect(),"
+    # the field, or the field and its Import button (Category, with eMule and aMule 3.x)
+    edges = ("(function(n){var f=(document.querySelector('#GM_config_'+n+'_var .catbox')||"
+             "document.getElementById('GM_config_field_'+n)).getBoundingClientRect(),"
              "h=document.querySelector('#GM_config_'+n+'_var .help').getBoundingClientRect();"
-             "return [Math.round(f.left)==Math.round(h.left), Math.round(f.right)==Math.round(h.right)];})")
+             "return [Math.abs(f.left-h.left)<0.5, Math.abs(f.right-h.right)<0.5];})")       # within half a pixel
     t.eq([t.js(f"{edges}('emuleUrl')"), t.js(f"{edges}('emuleCat')")], [[True, True], [True, True]],
-         'Server URL and Category as wide as their help')
+         'Server URL, and Category with its Import button, as wide as their help')
     t.eq(t.js("(function(){var p=document.getElementById('GM_config_field_emulePwd').getBoundingClientRect(),"
-              "b=document.querySelector('#GM_config .reveal').getBoundingClientRect(),"
+              "b=document.querySelector('#GM_config .pwdbox').lastElementChild.getBoundingClientRect(),"
               "h=document.querySelector('#GM_config_emulePwd_var .help').getBoundingClientRect();"
-              "return [Math.round(p.left)==Math.round(h.left), Math.round(b.right)==Math.round(h.right)];})()"),
-         [True, True], 'Password and its Show button as wide as their help')
+              "return [Math.abs(p.left-h.left)<0.5, Math.abs(b.right-h.right)<0.5];})()"),
+         [True, True], 'Password and its buttons (Show, Test) as wide as their help')
     t.close_settings()
     t.check(t.open_settings(), 'settings dialog opened again')
-    t.eq(t.js(shown), 11, 'the choice is kept at the next opening')
+    t.eq(t.js(shown), 12, 'the choice is kept at the next opening')
     t.click('#GM_config_helpBtn')
-    t.eq([t.js(shown), t.js(help_btn), t.gm('settings_help'), t.js(tooltips)], [0, '? Show help', 0, 11],
+    t.eq([t.js(shown), t.js(help_btn), t.gm('settings_help'), t.js(tooltips)], [0, '? Show help', 0, 12],
          'Help button again: hidden, stored, tooltips back')
     t.eq([t.js(f"{field(n)}.size") for n in ('emuleUrl', 'emuleCat', 'popupHeight', 'editRow')],
          [32, 40, 6, 4], 'fields sized to their content')
@@ -193,6 +196,35 @@ def test_settings_dialog_width_border_links(t):
          'links to the issues and to the repository, in a new tab')
 
 
+def test_page_text_styles_kept_out(t):
+    """SF-2.6 and SF-8.1: the popup and the settings dialog are built inside the page, but do not take
+    its text styles: on a page that centers its text (some forums), with capitals, spacing, indent and
+    italics, their text stays as designed."""
+    t.serve('/__styled', '<!doctype html><meta charset="utf-8"><title>styled page</title>'
+            '<style>body, div, td, span, label { text-align: center; text-transform: uppercase; letter-spacing: 3px;'
+            ' word-spacing: 9px; text-indent: 30px; font-style: italic; line-height: 3; }</style>'
+            '<div><a href="ed2k://|file|a.mp3|1048576|ABCDEF1234567890ABCDEF1234567890|/">a.mp3</a></div>')
+    style = ("(function(sels){return sels.map(function(s){var e=document.querySelector(s);if(!e)return s+': missing';"
+             "var c=getComputedStyle(e);return [s,c.textAlign,c.textTransform,c.letterSpacing,c.wordSpacing,c.textIndent,"
+             "c.fontStyle].join(' ');});})")
+    normal = 'none normal 0px 0px normal'
+    t.load('__styled', settings=dict(EMULE, ed2kDlMethod='amuleapi'))
+    t.js("showStatus('1 link(s) added to aMule', true)")
+    t.eq(t.js(style + "(['#divBody td', '#emlStatus', '#theDiv .toolbar div'])"),
+         [f'{s} left {normal}' for s in ('#divBody td', '#emlStatus', '#theDiv .toolbar div')],
+         'popup: aligned to the left, no style of the page')
+    t.check(t.open_settings(), 'settings dialog opened')
+    t.click('#GM_config_helpBtn')
+    # the address of a server (that of Local, "nothing to configure", is in italics on purpose)
+    parts = ['#GM_config .help', '#GM_config .srow label', '#GM_config .srow + .srow .sum', '#GM_config .sadd',
+             '#GM_config .section_desc']
+    t.eq(t.js(style + f"({parts!r})"), [f'{s} left {normal}' for s in parts], 'dialog: aligned to the left, no style of the page')
+    t.eq([t.js("getComputedStyle(document.querySelector('#GM_config .field_label')).textAlign"),
+          t.js("getComputedStyle(document.getElementById('GM_config_saveBtn')).textAlign"),
+          t.js("getComputedStyle(document.querySelector('#GM_config .help')).lineHeight")],
+         ['right', 'center', 'normal'], 'labels to the right, buttons centered, normal line height')
+
+
 def test_settings_dialog_in_low_window(t):
     """SF-8.13: the dialog is anchored at the top of the window and never higher than it, even
     when the window is made lower once it is open: it scrolls inside, down to its Save button.
@@ -226,7 +258,7 @@ def test_settings_dialog_in_low_window(t):
 SERVER_ROWS = ("[].map.call(document.querySelectorAll('#GM_config_servers .srow'), function (r) {"
                "return [r.getAttribute('data-server'), r.querySelector('input').checked, r.querySelector('label').textContent,"
                "r.querySelector('.method').textContent, r.querySelector('.sum').textContent]; })")
-SHOWN_FIELDS = ("['serverName','serverMethod','emuleUrl','emulePwd','emuleCat'].filter(function (id) {"
+SHOWN_FIELDS = ("['serverName','serverMethod','emuleUrl','emuleUser','emulePwd','emuleCat'].filter(function (id) {"
                 "var r = document.getElementById('GM_config_' + id + '_var'); return r.offsetParent != null; })")
 EDITED = ("(function(){var f=document.getElementById('GM_config_server_fields');"
           "return f.style.display == 'none' ? null : f.previousElementSibling.getAttribute('data-server');})()")
@@ -274,7 +306,7 @@ def test_settings_servers_list(t):
     expected = {'emule': ['serverName', 'serverMethod', 'emuleUrl', 'emulePwd', 'emuleCat'],
                 'amuleapi': ['serverName', 'serverMethod', 'emuleUrl', 'emulePwd', 'emuleCat'],
                 'amule': ['serverName', 'serverMethod', 'emuleUrl', 'emulePwd', 'emuleCat'],
-                'mldonkey': ['serverName', 'serverMethod', 'emuleUrl'],
+                'mldonkey': ['serverName', 'serverMethod', 'emuleUrl', 'emuleUser', 'emulePwd'],
                 'custom': ['serverName', 'serverMethod', 'emuleUrl', 'emuleCat']}
     for method in ('emule', 'amuleapi', 'amule', 'mldonkey', 'custom'):
         set_server(t, method=method)
@@ -393,12 +425,14 @@ def test_settings_delete_server(t):
 
 def test_settings_undo_button(t):
     """SF-8.14: the Undo button of a notice has the style of the Show button, and is always on the
-    right of the notice; in the list of the servers, on the right edge of the fields and of Show."""
-    undo = ("(function(){var u=document.getElementById('GM_config_undoBtn'), s=document.querySelector('#GM_config .reveal');"
+    right of the notice; in the list of the servers, on the right edge of the fields and of their
+    buttons (Show, Test)."""
+    undo = ("(function(){var u=document.getElementById('GM_config_undoBtn'), s=document.querySelector('#GM_config .reveal'),"
+            "last=document.querySelector('#GM_config .pwdbox').lastElementChild;"
             "var n=u.parentNode, cu=getComputedStyle(u), cs=getComputedStyle(s), cn=getComputedStyle(n);"
             "return {style: [cu.fontSize, cu.padding, cs.fontSize, cs.padding],"
             "end: Math.round(n.getBoundingClientRect().right - parseFloat(cn.paddingRight) - u.getBoundingClientRect().right),"
-            "show: Math.round(s.getBoundingClientRect().right - u.getBoundingClientRect().right)};})()")
+            "show: Math.round(last.getBoundingClientRect().right - u.getBoundingClientRect().right)};})()")
     t.load(settings=EMULE)
     t.check(t.open_settings(), 'settings dialog opened')
     for name in ('aMule NAS', 'aMule seedbox'):
@@ -408,7 +442,7 @@ def test_settings_undo_button(t):
     click_server(t, 'aMule seedbox', 'delete')
     r = t.js(undo)
     t.eq(r['style'], ['11px', '2px 8px'] * 2, 'Undo of a deleted server: the style of Show')
-    t.eq([r['end'], r['show']], [0, 0], 'on the right of its notice, under Show')
+    t.eq([r['end'], r['show']], [0, 0], 'on the right of its notice, under the buttons of the password')
     t.js("document.getElementById('GM_config_resetBtn').click()")
     r = t.js(undo)
     t.eq(r['style'], ['11px', '2px 8px'] * 2, 'Undo of Reset: the style of Show')

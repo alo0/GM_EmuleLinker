@@ -1,0 +1,26 @@
+# Editor settings of the repository (https://editorconfig.org), applied by VS Code with the
+# EditorConfig extension. The line endings are left to git (LF in the repository).
+# tests/test_repository.py (test_indentation) checks the files against these rules.
+root = true
+
+[*]
+charset = utf-8
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# tabs; in GM_EmuleLinker.user.js, the embedded GM_config library keeps its own style (2 spaces)
+[*.js]
+indent_style = tab
+indent_size = 4
+
+[*.py]
+indent_style = space
+indent_size = 4
+
+# Markdown: 2 spaces under a bullet; under a numbered item, its text is 3 spaces in (CommonMark)
+[*.md]
+indent_style = space
+indent_size = 2
+
+[*.{html,jsonc}]
+indent_style = space

@@ -14,6 +14,7 @@ this path stays open.
 import datetime
 import os
 import re
+import subprocess
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DOCUMENTS = ['README.md', 'SPECIFICATIONS.md', 'test_sample.html', 'test_many_links.html']
@@ -94,10 +95,12 @@ def test_no_dead_code(t):
     """§ 3.6: the code that could not work is gone, its commented-out calls too: silent XHR
     sending (blocked by CORS and mixed content, L-3) and waiting for a child window; the former
     definition of the method field, commented out; leftovers of the settings dialog (a function
-    no longer called, the style of the greyed fields, now hidden)."""
+    no longer called, the style of the greyed fields, now hidden); the fixed delay of the aMule 2.x
+    login (sleep()), replaced in 0.12 by the answer of the login, awaited; the update of the links of
+    the popup after a category change (refreshLinkUrls()), none of them carrying the category since 0.12."""
     text = read(SCRIPT)
     for name in ('silentPost', 'silentGet', 'loadChildWindow', 'waitReady', 'childWindow', "/*'ed2kDlMethod'",
-                 'settingsFieldIds', '.unused'):
+                 'settingsFieldIds', '.unused', 'function sleep(', 'await sleep', 'refreshLinkUrls'):
         t.check(name not in text, f'{SCRIPT}: no {name}')
 
 
@@ -148,6 +151,70 @@ def test_update_urls(t):
     """§ 3.2: the script updates itself from its own address on GitHub."""
     for key in ('updateURL', 'downloadURL'):
         t.eq(meta(SCRIPT, key), RAW + SCRIPT, f'{SCRIPT}: @{key}')
+
+
+def markdown_indents(lines):
+    """The lines of a Markdown file indented otherwise than on the text of the list item they belong to:
+    2 spaces under '- ', 3 under '1. ' (the minimum of CommonMark), and no code block made by an
+    indent of 4 spaces (fenced blocks only, their content left as it is)."""
+    item = re.compile(r'^( *)([-*+]|\d+[.)]) ')
+    columns = []        # where the text of each open list item starts
+    fenced = False
+    found = []
+    for number, line in enumerate(lines, 1):
+        if line.lstrip().startswith('```'):
+            fenced = not fenced
+            continue
+        if fenced or not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip(' '))
+        columns = [c for c in columns if c <= indent] if indent else []
+        if indent and indent not in columns:
+            found.append(number)
+        m = item.match(line)
+        if m:
+            columns.append(indent + len(m.group(2)) + 1)
+    return found
+
+
+def test_indentation(t):
+    """§ 3.1: the indentation set by .editorconfig: tabs in the JavaScript (the PARAM and CODE blocks of
+    the script, the shim of the tests), spaces in the GM_config library embedded in the script (its
+    own style), in the Markdown, HTML and JSON files; no line mixing tabs and spaces (the Python files
+    included), no blank at the end of a line, a final newline. GM_EmuleLinker.js, frozen at 0.10, is
+    left out."""
+    listed = subprocess.run(['git', 'ls-files'], cwd=ROOT, capture_output=True, text=True, encoding='utf-8')
+    names = [n for n in listed.stdout.split('\n') if n and n != FORMER
+             and os.path.splitext(n)[1] in ('.js', '.py', '.md', '.html', '.jsonc', '')]
+    t.check(SCRIPT in names and '.editorconfig' in names, 'the files of the repository listed by git', listed.stderr)
+
+    def wrong(lines, first, test):
+        """The numbers of the lines (from first) that fail the test, the first five of them."""
+        return [first + i for i, line in enumerate(lines) if line.strip() and test(re.match(r'[ \t]*', line).group())][:5]
+
+    tabs = lambda lead: ' ' in lead                     # noqa: E731
+    spaces = lambda lead: '\t' in lead                  # noqa: E731
+    mixed = lambda lead: ' ' in lead and '\t' in lead   # noqa: E731
+    for name in names:
+        text = read(name).replace('\r\n', '\n')
+        lines = text.split('\n')
+        if name == SCRIPT:
+            lib = lines.index('// \t\t\t\t\t\t\t\tLIB')
+            code = lines.index('// \t\t\t\t\t\t\t\tCODE')
+            t.eq(wrong(lines[:lib], 1, tabs), [], f'{name}: PARAM block indented with tabs')
+            t.eq(wrong(lines[lib:code], lib + 1, spaces), [], f'{name}: GM_config library indented with spaces')
+            t.eq(wrong(lines[code:], code + 1, tabs), [], f'{name}: CODE block indented with tabs')
+        elif name.endswith('.js'):
+            t.eq(wrong(lines, 1, tabs), [], f'{name}: indented with tabs')
+        elif name.endswith('.py'):
+            t.eq(wrong(lines, 1, mixed), [], f'{name}: no line mixing tabs and spaces')
+        elif name.endswith('.md'):
+            t.eq(wrong(lines, 1, spaces), [], f'{name}: indented with spaces')
+            t.eq(markdown_indents(lines)[:5], [], f'{name}: list content on the text of its item, no indented code')
+        elif os.path.splitext(name)[1]:
+            t.eq(wrong(lines, 1, spaces), [], f'{name}: indented with spaces')
+        t.eq([i + 1 for i, line in enumerate(lines) if line != line.rstrip(' \t')][:5], [], f'{name}: no blank at the end of a line')
+        t.check(text.endswith('\n'), f'{name}: a final newline')
 
 
 def test_former_address(t):

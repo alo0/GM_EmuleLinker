@@ -110,6 +110,11 @@ def test_live_emule(t):
         for (name, _), file_hash in zip(files, hashes):
             t.check(name in listing, f'name intact in eMule: {name}')
             t.check(file_hash in listing, f'hash intact in eMule: {name}')
+        # SF-7.12: sent by a request of the script, the answer of eMule shown, no window opened
+        t.eq(t.js("(document.getElementById('emlStatus') || {}).textContent"), '3 link(s) added to eMule',
+             'the popup shows the answer of eMule')
+        t.eq(len(t.open_pages()), 1, 'no window opened')
+        t.eq(t.dialogs, [], 'no alert')
     finally:
         for file_hash in hashes:
             try:
@@ -119,3 +124,44 @@ def test_live_emule(t):
         t.check(wait_until(lambda: not any(name in web.transfers() for name, _ in files), 20),
                 'cleanup: the test files are cancelled and gone from eMule')
         web.logout()
+
+
+def test_live_emule_test_button(t):
+    """SF-8.17 against the real eMule: Test connects with the right password and gives its version,
+    refuses a wrong one; nothing is saved, nothing is sent."""
+    status = "(function(){var s=document.getElementById('GM_config_testStatus');return s ? s.textContent : null;})()"
+    for password, expected in ((os.environ['EMULE_PASSWORD'], '✔ Connected to eMule'),
+                               ('wrong-' + secrets.token_hex(3), '✖ eMule refused the password')):
+        t.load(settings={'ed2kDlMethod': 'emule', 'emuleUrl': emule_url(), 'emulePwd': password, 'emuleCat': '*default=0;'})
+        t.check(t.open_settings(), 'settings dialog opened')
+        t.click('#GM_config_testBtn')
+        t.check(wait_until(lambda: t.js(status) is not None, 20), 'Test: a result')
+        shown = t.js(status) or ''
+        t.check(shown.startswith(expected), f'Test: {expected}', shown)
+        t.eq(t.stored_settings().get('emulePwd'), password, 'nothing saved')
+
+def test_live_emule_import(t):
+    """SF-8.18 against the real eMule: Import fills the Category field with every category of eMule,
+    in its order, accents included, as its own list shows them. Nothing is saved, nothing changed in
+    eMule. The names are compared, never printed."""
+    password = os.environ['EMULE_PASSWORD']
+    web = EmuleWeb(emule_url(), password)
+    try:
+        page = web._fetch(f'{web.base}?ses={web.ses}&w=transfer')
+    finally:
+        web.logout()
+    found = re.search(r'<select name="cat".*?</select>', page, re.S)
+    expected = [(int(i), html.unescape(n)) for i, n in re.findall(r'<option[^>]*value="(-?\d+)"[^>]*>([^<]*)</option>',
+                                                                   found.group(0) if found else '')]
+    t.check(expected, 'the categories of eMule read by the test')
+    status = "(function(){var s=document.getElementById('GM_config_importStatus');return s ? s.textContent : null;})()"
+    t.load(settings={'ed2kDlMethod': 'emule', 'emuleUrl': emule_url(), 'emulePwd': password, 'emuleCat': '*default=0;'})
+    t.check(t.open_settings(), 'settings dialog opened')
+    t.click('#GM_config_importBtn')
+    t.check(wait_until(lambda: t.js(status) is not None, 20), 'Import: a result')
+    imported = t.call('strToCat', t.js("document.getElementById('GM_config_field_emuleCat').value"))
+    imported = [] if imported == -1 else [(int(c['value']), c['name']) for c in imported]
+    t.eq(len(imported), len(expected), 'Import: every category of eMule')
+    t.check([i for i, _ in imported] == [i for i, _ in expected], 'Import: in the order of eMule')
+    t.check([n for _, n in imported] == [n for _, n in expected], 'Import: the names of eMule, accents included')
+    t.eq(t.stored_settings().get('emuleCat'), '*default=0;', 'nothing saved')

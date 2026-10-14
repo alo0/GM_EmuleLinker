@@ -9,7 +9,7 @@
 // @grant 		GM_log
 // @grant 		GM_xmlhttpRequest
 // @connect     *
-// @version     0.11
+// @version     0.12
 // @updateURL       https://raw.githubusercontent.com/alo0/GM_EmuleLinker/master/GM_EmuleLinker.user.js
 // @downloadURL     https://raw.githubusercontent.com/alo0/GM_EmuleLinker/master/GM_EmuleLinker.user.js
 // ==/UserScript==
@@ -60,6 +60,7 @@ var ed2kDlMethod = 'local';
 	// custom: custom via web url
 
 var emuleUrl = 'http://127.0.0.1:4711/'; 	// the adress and port of your emule web server
+var emuleUser = 'admin'; // the user of the web interface of MLDonkey (its default one)
 var emulePwd = ''; // the password to access the emule web server (optional)
 var emuleCat = [ {name: 'default', value: '0', select: '1'} ]; // Which emule category to assign 0=all (default)
 
@@ -663,7 +664,7 @@ GM_configField.prototype = {
           wrap.appendChild(create('option', {
             innerHTML: options[i],
             value: i,
-			selected: i == value ? true : false
+            selected: i == value ? true : false
             //selected: options[i] == value ? true : false	// bug: doesn't take into account the default value (https://github.com/sizzlemctwizzle/GM_config/issues/30)
           }));
 
@@ -816,7 +817,7 @@ var eLinks=new Array();
 var eFiles=new Array();
 var eSizes=new Array();
 
-var amuleApiBusy = false;	// a sending to aMule waits for its answer, see setSending()
+var sendingBusy = false;	// a sending (aMule, eMule, MLDonkey) waits for its answer, see setSending()
 var statusTimer = null;		// animation of the "Please wait" message, see showStatus()
 
 // Settings dialog, see settingsDialogOpened()
@@ -831,6 +832,12 @@ var SETTINGS_CSS = "#GM_config { width: clamp(640px, 50vw, 960px) !important; he
 	+ " top: 10px !important; left: 0 !important; right: 0 !important; margin: 0 auto !important; overflow-y: auto !important;"
 	+ " border: 2px solid #2b5c8a !important; box-shadow: 0 6px 24px rgba(0,0,0,.35); border-radius: 4px; }"
 	+ "\n#GM_config * { font-family: Arial, Tahoma, sans-serif; }"
+	// the dialog is built inside the page (GM_config): the text styles of the page must not reach it. A page
+	// that centers its text would otherwise center the helps and the servers. The buttons keep their text
+	// centered, and the rules of the dialog that align something on purpose (labels) are more specific.
+	+ "\n#GM_config, #GM_config *:not(button) { text-align: left; }"
+	+ "\n#GM_config, #GM_config * { line-height: normal; letter-spacing: normal; word-spacing: normal;"
+	+ " text-transform: none; text-indent: 0; font-style: normal; }"
 	+ "\n#GM_config_wrapper { padding: 0 0 6px; }"
 	+ "\n#GM_config .config_header { font-size: 15px; font-weight: bold; padding: 10px 14px; text-align: left;"
 	+ " border-bottom: 1px solid #ccd; display: flex; justify-content: space-between; align-items: center; }"
@@ -900,13 +907,13 @@ var SETTINGS_CSS = "#GM_config { width: clamp(640px, 50vw, 960px) !important; he
 	+ "\n#GM_config .sadd { border-top: 1px solid #e3e8ef; padding: 6px 8px; }"
 	+ "\n#GM_config .sadd button { font-size: 12px; padding: 3px 10px; }"
 	+ "\n#GM_config #GM_config_field_serverName { grid-column: 2 / -1; width: 100%; box-sizing: border-box; }"
-	// Test and Import (amuleapi only, see addApiButtons()): the style of Show. Import and the Undo of an
+	// Test and Import (emule, amule, amuleapi), see addApiButtons(): the style of Show. Import and the Undo of an
 	// import share a column on the right of the Category field and of the result of the import.
 	+ "\n#GM_config .apibtn { font-size: 11px; padding: 2px 8px; white-space: nowrap; }"
-	+ "\n#GM_config .sfields.noapi .apibtn { display: none; }"
+	+ "\n#GM_config .sfields.notest #GM_config_testBtn, #GM_config .sfields.noimport #GM_config_importBtn { display: none; }"
 	+ "\n#GM_config .catbox { grid-column: 2 / -1; display: grid; grid-template-columns: 1fr auto; column-gap: 8px;"
 	+ " row-gap: 4px; align-items: center; }"
-	+ "\n#GM_config .sfields.noapi .catbox { grid-template-columns: 1fr; }"
+	+ "\n#GM_config .sfields.noimport .catbox { grid-template-columns: 1fr; }"
 	+ "\n#GM_config .catbox #GM_config_field_emuleCat { grid-column: 1; min-width: 0; }"
 	+ "\n#GM_config #GM_config_emuleCat_var > .field_label { align-self: start; margin-top: 4px; }"
 	// their result, under the field: green, orange (connected, but the links would be refused) or red
@@ -923,11 +930,15 @@ var METHOD_FIELDS = {
 	'emule': ['emuleUrl', 'emulePwd', 'emuleCat'],
 	'amuleapi': ['emuleUrl', 'emulePwd', 'emuleCat'],
 	'amule': ['emuleUrl', 'emulePwd', 'emuleCat'],
-	'mldonkey': ['emuleUrl'],
+	'mldonkey': ['emuleUrl', 'emuleUser', 'emulePwd'],
 	'custom': ['emuleUrl', 'emuleCat']
 };
-var METHOD_SETTINGS = ['emuleUrl', 'emulePwd', 'emuleCat'];	// the settings of a server, besides its name and method
-var dialogServers = null;	// in the settings dialog: {active: id or null for Local, list: [{id, name, method, emuleUrl, emulePwd, emuleCat}]}
+var METHOD_SETTINGS = ['emuleUrl', 'emuleUser', 'emulePwd', 'emuleCat'];	// the settings of a server, besides its name and method
+// The Test and Import buttons of the methods that have them (SF-8.16 to SF-8.18): the function of each
+// one, called by testServer() and importCategories(); the buttons of the other methods are hidden
+var TEST_ACTIONS = {'amuleapi': testAmuleApi, 'emule': testEmule, 'amule': testAmuleWeb, 'mldonkey': testMldonkey};
+var IMPORT_ACTIONS = {'amuleapi': importAmuleCategories, 'emule': importEmuleCategories, 'amule': importAmuleWebCategories};
+var dialogServers = null;	// in the settings dialog: {active: id or null for Local, list: [{id, name, method, emuleUrl, emuleUser, emulePwd, emuleCat}]}
 var dialogEdited = null;	// in the settings dialog: the id of the server whose settings are displayed, or null
 var CATEGORY_ERROR = 'No valid category: write them as name=value, separated by ; (e.g. *default=0;Video=2)';
 var SERVER_URL = /^https?:\/\/[^\/\s]+/i;	// the Server URL of every method: http or https only
@@ -961,30 +972,30 @@ if (n>0 && GM_getValue("popup_mode", 1) != 0) {
 
 // Add key accelerator shortcuts
 (function(d){
-d.addEventListener('keydown', function(e) {
-	// pressed ctl+alt
-	if (e.keyCode == 65 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { addButton(); }	// ctl+alt+a
-	if (e.keyCode == 67 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { closeButton(); } // ctl+alt+c
-	if (e.keyCode == 77 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { editButton(); } // ctl+alt+m
-	if (e.keyCode == 79 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { openButton(); } // ctl+alt+o
-	if (e.keyCode == 83 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { setButton(); } // ctl+alt+s
-	if (e.keyCode == 88 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { // ctl+alt+x
-		switch(GM_getValue("popup_mode", 1)) {
-		case 0: // popup closed
-			openButton();
-			break;
+	d.addEventListener('keydown', function(e) {
+		// pressed ctl+alt
+		if (e.keyCode == 65 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { addButton(); }	// ctl+alt+a
+		if (e.keyCode == 67 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { closeButton(); } // ctl+alt+c
+		if (e.keyCode == 77 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { editButton(); } // ctl+alt+m
+		if (e.keyCode == 79 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { openButton(); } // ctl+alt+o
+		if (e.keyCode == 83 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { setButton(); } // ctl+alt+s
+		if (e.keyCode == 88 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { // ctl+alt+x
+			switch(GM_getValue("popup_mode", 1)) {
+				case 0: // popup closed
+					openButton();
+					break;
 
-		case 1: // normal mode
-		case 2: // edit mode
-			closeButton();
-			break;
+				case 1: // normal mode
+				case 2: // edit mode
+					closeButton();
+					break;
 
-		default:
-			trace("ERROR: popup_mode=" + GM_getValue("popup_mode", 1));
-			alert("Error !!! popup_mode unknown.");
-			break;
+				default:
+					trace("ERROR: popup_mode=" + GM_getValue("popup_mode", 1));
+					alert("Error !!! popup_mode unknown.");
+					break;
+			}
 		}
-	}
 	}, false);
 })(document);
 
@@ -1058,19 +1069,19 @@ function getEd2kLinks(links, files, sizes) {
 				continue;
 			}
 
-            // Store the size
-            sizes[idx]=tlnk[3];
+			// Store the size
+			sizes[idx]=tlnk[3];
 
-            // Check if the filename has been encoded twice
-            if(tlnk[2].search(/%(?:[0-9A-Fa-f]{2})/)>-1) {
-                // Sometimes names are encoded twice. Therefore we do it a second time. It may cause problems with filename using % followed by chars but it should be rare for Comics name.
-                try {
-                    tlnk[2]=decodeURIComponent(tlnk[2]);
-                }
-                catch (e) {
-                    trace("Error in decoding filename a second time");
-                }
-            }
+			// Check if the filename has been encoded twice
+			if(tlnk[2].search(/%(?:[0-9A-Fa-f]{2})/)>-1) {
+				// Sometimes names are encoded twice. Therefore we do it a second time. It may cause problems with filename using % followed by chars but it should be rare for Comics name.
+				try {
+					tlnk[2]=decodeURIComponent(tlnk[2]);
+				}
+				catch (e) {
+					trace("Error in decoding filename a second time");
+				}
+			}
 
 			// check if the filename doesn't already exist
 			if (files.indexOf(tlnk[2])>=0) {
@@ -1166,15 +1177,15 @@ function createPopup(links, files, sizes) {
 
 	trace("createPopup");
 	// First the Div
-    theDiv=document.createElement('div');
+	theDiv=document.createElement('div');
 	divBody = '<div id="theDiv" style="\
-                    position:'+ popupPos + '; \
+					position:'+ popupPos + '; \
 					top:0; \
 					left:0; \
 					background-color:white; \
 					opacity:0.97; \
 					color:black;\
-                    margin:0;\
+					margin:0;\
 					border:2px solid #2b5c8a;\
 					z-index:255;\
 					text-align:left;\
@@ -1196,10 +1207,10 @@ function createPopup(links, files, sizes) {
 	}
 	divBody += 'overflow:auto"> \
 	<style> \
-        div#theDiv button { \
+		div#theDiv button { \
 			font-size:11px;\
 		} \
-        div#theDiv select { \
+		div#theDiv select { \
 			font-size:11px;\
 		} \
 		div#theDiv input.smallcheck { \
@@ -1209,7 +1220,7 @@ function createPopup(links, files, sizes) {
 			font-size:10px;\
 			line-height:90%;\
 		} \
-        div#divBody a {font-size: 10px;} \
+		div#divBody a {font-size: 10px;} \
 		div#divBody a.ed2k:link       { color: #000000; text-decoration: none } \
 		div#divBody a.ed2k:visited    { color: #000000; text-decoration: none } \
 		div#divBody a.ed2k:hover      { color: #0000FF; text-decoration: underline; font-weight: normal } \
@@ -1218,23 +1229,26 @@ function createPopup(links, files, sizes) {
 			height: 16px; \
 			width: 16px; \
 		} \
-        div#divBody table { \
-            all: revert; \
-            margin: 0px auto; \
-            font-size: 10px; \
-            border-collapse: collapse; \
-            width: 100%; \
-        } \
-        div#divBody td { \
-            background: #FFFFFF; padding: 0px 4px;} \
-        div#divBody th { \
-            background: #FFFFFF; padding: 0px 4px;} \
-        div#divBody tr { \
-            background: #FFFFFF; \
-        } \
-        div#divBody tr:hover td { \
-            background: #e3f0fa; \
-        } \
+		div#divBody table { \
+			all: revert; \
+			margin: 0px auto; \
+			font-size: 10px; \
+			border-collapse: collapse; \
+			width: 100%; \
+		} \
+		div#divBody td { \
+			background: #FFFFFF; padding: 0px 4px;} \
+		div#divBody th { \
+			background: #FFFFFF; padding: 0px 4px;} \
+		div#divBody tr { \
+			background: #FFFFFF; \
+		} \
+		div#divBody tr:hover td { \
+			background: #e3f0fa; \
+		} \
+		div#theDiv div, div#divBody td, div#divBody th { text-align: left; } \
+		div#theDiv, div#theDiv * { letter-spacing: normal; word-spacing: normal; text-transform: none; \
+			text-indent: 0; font-style: normal; } \
 	</style> \
 	</div>';
 	theDiv.innerHTML=divBody;
@@ -1407,7 +1421,7 @@ function addToolbar(container, pos) {
 	tmp_link.addEventListener('click', function(){ addButton(); }, false );
 	tmp_link.innerHTML = '<u>A</u>dd all links';
 	tmp_link.className = 'emlAdd';	// disabled while a sending waits for its answer (setSending())
-	tmp_link.disabled = amuleApiBusy;
+	tmp_link.disabled = sendingBusy;
 	divL.appendChild (tmp_link);
 
 	divL.appendChild (document.createTextNode(' '));
@@ -1416,18 +1430,18 @@ function addToolbar(container, pos) {
 	tmp_link=document.createElement('button');
 	tmp_link.addEventListener('click', function(){ editButton(); }, false );
 	switch(GM_getValue("popup_mode", 1)) {
-	case 0:	// popup closed
-	case 1: // in normal mode
-		tmp_link.innerHTML = 'Edit <u>m</u>ode';
-		break;
-	case 2: // in edit mode
-		tmp_link.innerHTML = 'Normal <u>m</u>ode';
-		break;
-	default: // error
-		trace("ERROR: popup_mode=" + GM_getValue("popup_mode", 1));
-		alert("Error !!! popup_mode unknown.");
-		tmp_link.innerHTML = 'Edit <u>m</u>ode';
-		break;
+		case 0:	// popup closed
+		case 1: // in normal mode
+			tmp_link.innerHTML = 'Edit <u>m</u>ode';
+			break;
+		case 2: // in edit mode
+			tmp_link.innerHTML = 'Normal <u>m</u>ode';
+			break;
+		default: // error
+			trace("ERROR: popup_mode=" + GM_getValue("popup_mode", 1));
+			alert("Error !!! popup_mode unknown.");
+			tmp_link.innerHTML = 'Edit <u>m</u>ode';
+			break;
 	}
 
 	divL.appendChild (tmp_link);
@@ -1518,21 +1532,21 @@ function editButton() {
 		return;
 	}
 	switch(GM_getValue("popup_mode", 1)) {
-	case 1: // in normal mode
-		GM_setValue("popup_mode",2);
-		updatePopup();
-		break;
+		case 1: // in normal mode
+			GM_setValue("popup_mode",2);
+			updatePopup();
+			break;
 
-	case 0: // popup closed
-	case 2: // in edit mode
-		GM_setValue("popup_mode",1);
-		updatePopup();
-		break;
+		case 0: // popup closed
+		case 2: // in edit mode
+			GM_setValue("popup_mode",1);
+			updatePopup();
+			break;
 
-	default:
-		trace("ERROR: popup_mode=" + GM_getValue("popup_mode", 1));
-		alert("Error !!! popup_mode unknown.");
-		return;
+		default:
+			trace("ERROR: popup_mode=" + GM_getValue("popup_mode", 1));
+			alert("Error !!! popup_mode unknown.");
+			return;
 	}
 }
 
@@ -1581,7 +1595,7 @@ function openButton() {
 */
 function checkButton() {
 	trace("checkButton()");
-    var i=0;
+	var i=0;
 	var checkbox=document.getElementById("checkall");
 	var line;
 	if (checkbox.checked==true) {
@@ -1614,47 +1628,44 @@ function changeCat() {
 			emuleCat[i].select=0;
 		}
 	}
-  // Not stored on purpose (product decision, SPECIFICATIONS.md SF-6.9): the category chosen here is valid for the current page only,
-  // each new page starts again on the default category of the settings.
-  // Storing it was tried: it was causing a bug when the user changed the category in the popup and then opened the settings dialog: the category was reset to the default value.
+	// Not stored on purpose (product decision, SPECIFICATIONS.md SF-6.9): the category chosen here is valid for the current page only,
+	// each new page starts again on the default category of the settings.
+	// Storing it was tried: it was causing a bug when the user changed the category in the popup and then opened the settings dialog: the category was reset to the default value.
 	//GM_config.set("emuleCat", catToStr(emuleCat));
-	refreshLinkUrls();
+	// nothing else to do: the popup is not rebuilt, and no link of the popup carries the category,
+	// read when sending (SF-6.6, SF-6.8)
 }
 
 /**
-* Update the URL of the file name links of the popup after a category change
-* Only these links depend on the category (getAddLink()): the popup is not rebuilt, so
-* that the checkboxes, the edit box, the size and the scroll of the popup are kept (SF-6.8).
+* The methods whose sending a link of the popup cannot make: a POST form (custom), a JSON
+* request (amuleapi), requests of the script, without a window (emule, amule, mldonkey): every
+* method but local
 */
-function refreshLinkUrls() {
-	var anchors = document.querySelectorAll('#divBody a.ed2k');
-	for (var i=0; i<anchors.length; i++) {
-		anchors[i].setAttribute('href', linkHref(eLinks[i]));
-	}
+function sentByScript() {
+	return ed2kDlMethod != 'local';
 }
 
 /**
 * The href of a file name link of the popup
-* For the custom method the links are sent with a POST form, and for the amuleapi method
-* with a JSON request, which a link cannot do: the href is then the ed2k link itself (shown
-* on hover, copied by "Copy link"), and a click on it is turned into the sending by
-* clickOneLink() (SF-3.3).
+* For the methods whose sending a link cannot make (sentByScript()), the href is the ed2k link
+* itself (shown on hover, copied by "Copy link"), and a click on it is turned into the sending
+* by clickOneLink() (SF-3.3).
 * @param link the ed2k link
 * @return the href of its link in the popup
 */
 function linkHref(link) {
-	return (ed2kDlMethod == 'custom' || ed2kDlMethod == 'amuleapi') ? encodeEd2kLink(link) : getAddLink([link]);
+	return sentByScript() ? encodeEd2kLink(link) : getAddLink([link]);
 }
 
 /**
-* A click on a file name of the popup, with the custom or amuleapi method: the link cannot
-* send the request itself, this sends it for this file only. The other methods: nothing to
-* do, the link does the job.
+* A click on a file name of the popup, with every method but local: the link
+* cannot send the request itself, this sends it for this file only. The other methods:
+* nothing to do, the link does the job.
 * @param e the click event, caught on the list of links
 */
 function clickOneLink(e) {
 	var a = e.target.closest('a.ed2k');
-	if (!a || (ed2kDlMethod != 'custom' && ed2kDlMethod != 'amuleapi')) {
+	if (!a || !sentByScript()) {
 		return;
 	}
 	e.preventDefault();
@@ -1662,6 +1673,15 @@ function clickOneLink(e) {
 	var href = getAddLink([eLinks[[].indexOf.call(anchors, a)]]);
 	if (ed2kDlMethod == 'amuleapi') {
 		sendToAmuleApi(href);
+	}
+	else if (ed2kDlMethod == 'emule') {
+		sendToEmule(href);
+	}
+	else if (ed2kDlMethod == 'amule') {
+		sendToAmuleWeb(href);
+	}
+	else if (ed2kDlMethod == 'mldonkey') {
+		sendToMldonkey(href);
 	}
 	else {
 		post(emuleUrl, href);
@@ -1671,7 +1691,7 @@ function clickOneLink(e) {
 /**
 * Actions when "Add all links" button is pressed
 */
-async function addButton() {
+function addButton() {
 	trace("addButton()");
 	var href="";
 	var links=new Array();
@@ -1704,7 +1724,7 @@ async function addButton() {
 	}
 
 	href = getAddLink(links);
-	trace("href="+href);
+	trace("addButton() " + links.length + " link(s)");	// not the request: it may carry the password
 
 	if(ed2kDlMethod=='local') {
 		for (var i=0; i<links.length; i++) {
@@ -1714,22 +1734,12 @@ async function addButton() {
 		post(emuleUrl, href);
 	} else if(ed2kDlMethod=='amuleapi') {
 		sendToAmuleApi(href);
+	} else if(ed2kDlMethod=='emule') {
+		sendToEmule(href);
 	} else if(ed2kDlMethod=='amule') {
-        var a_win = null;
-
-        // This is a tweak to bypass amule login page
-        if(emulePwd != "") {
-            trace("Send password to make sure we are logged in and wait 1 sec... then...");
-            a_win = window.open(emuleUrl + "footer.php?pass=" + emulePwd, 'amule');
-            await sleep(1000); // Should be enough to bypass the login page. We don't want to wait too much to avoid slowing down the sending of links.
-        }
-        trace("Sending ed2k links to amule");
-        a_win = window.open(href, 'amule');
-        a_win.blur(); // Deprecated in most recent browsers
-	}
-	else {
-        var e_win = window.open(href, 'emule');
-		e_win.blur(); // Deprecated in most recent browsers
+		sendToAmuleWeb(href);
+	} else if(ed2kDlMethod=='mldonkey') {
+		sendToMldonkey(href);
 	}
 }
 
@@ -1795,7 +1805,7 @@ async function sendToAmuleApi(body) {
 	var token = null;
 	var r;
 
-	if (amuleApiBusy) {
+	if (sendingBusy) {
 		// a sending is waiting for its answer: the same links would be sent twice
 		trace('sendToAmuleApi() a sending is already in progress, ignored');
 		return;
@@ -1814,7 +1824,7 @@ async function sendToAmuleApi(body) {
 			return;
 		}
 		token = r.json.token;
-		r = await gmRequest('POST', api + 'downloads', body, token, amuleApiTimeout(body.links.length));
+		r = await gmRequest('POST', api + 'downloads', body, token, sendingTimeout(body.links.length));
 		showStatus(amuleApiResult(body.links, r), r.status == 202);
 	}
 	catch (e) {
@@ -1836,28 +1846,286 @@ async function sendToAmuleApi(body) {
 }
 
 /**
-* Mark a sending to aMule as in progress or finished
-* While it waits for its answer, the "Add all links" buttons are disabled, and
-* sendToAmuleApi() ignores any other sending (shortcut, click on a file name).
+* Send ed2k links to eMule through its web interface, without a window (SF-7.12)
+* The request is the GET that a window of the older versions opened, made by GM_xmlhttpRequest:
+* no window, nothing in the history of the browser, not subject to CORS nor to mixed content.
+* eMule answers it with a short XML status (checked on eMule 0.70b), shown to the user.
+* @param req the request made by getAddLink(): {url, count}
+*/
+async function sendToEmule(req) {
+	var r, result;
+
+	if (sendingBusy) {
+		// a sending is waiting for its answer: the same links would be sent twice
+		trace('sendToEmule() a sending is already in progress, ignored');
+		return;
+	}
+	if (req.count == 0) {
+		showStatus('No ed2k link to send', false);
+		return;
+	}
+	trace('sendToEmule() ' + req.count + ' link(s)');
+	setSending(true);
+	showStatus('Please wait', null);	// until the answer of eMule replaces it
+	try {
+		r = await gmRequest('GET', req.url, null, null, sendingTimeout(req.count));
+		result = emuleResult(req.count, r);
+		showStatus(result[0], result[1]);
+	}
+	catch (e) {
+		trace('sendToEmule() ' + e);
+		if (e.timeout) {
+			// eMule received the request but answers late: the links may well be added
+			showStatus('eMule has not answered within ' + Math.round(e.timeout / 1000) + ' s: the links may still be added, check eMule', false);
+		}
+		else {
+			showStatus('eMule can not be reached at ' + emuleUrl, false);
+		}
+	}
+	finally {
+		setSending(false);
+	}
+}
+
+/**
+* The message for the answer of eMule to a sending, and its kind
+* eMule 0.70b answers <status result="OK">...</status>, or result="FAILED" with a reason
+* (WRONG_PASSWORD). Another answer (another server, another version of eMule) is not
+* understood: the links may still be added.
+* @param count the number of links sent
+* @param r the answer, from gmRequest()
+* @return [message, kind]: kind true (added), false (refused), 'doubt' (not understood)
+*/
+function emuleResult(count, r) {
+	var status = /<status\s+result="(\w+)"(?:\s+reason="(\w+)")?/i.exec(r.text);
+
+	if (r.status == 200 && status && status[1].toUpperCase() == 'OK') {
+		return [count + ' link(s) added to eMule', true];
+	}
+	if (status && status[2] && status[2].toUpperCase() == 'WRONG_PASSWORD') {
+		return ['eMule refused the password', false];
+	}
+	if (status) {
+		return ['eMule refused the links' + (status[2] ? ' (' + status[2] + ')' : ''), false];
+	}
+	return ['Links sent, but the answer of eMule is not understood: check its transfer list', 'doubt'];
+}
+
+/**
+* Send ed2k links to aMule 2.x through its web interface (amuleweb), without a window (SF-7.13)
+* amuleweb needs a session: a login request first (the password), awaited, then the links, the
+* session being kept by its cookie (amuleweb_session_id), as a browser does. It answers the links
+* with its form again, without any result: the links are then looked for in its downloads, by
+* their hash (checked on aMule 2.3.3).
+* @param req the request made by getAddLink(): {url, count, hashes}
+*/
+async function sendToAmuleWeb(req) {
+	var r, login, found;
+
+	if (sendingBusy) {
+		trace('sendToAmuleWeb() a sending is already in progress, ignored');
+		return;
+	}
+	if (req.count == 0) {
+		showStatus('No ed2k link to send', false);
+		return;
+	}
+	trace('sendToAmuleWeb() ' + req.count + ' link(s)');
+	setSending(true);
+	showStatus('Please wait', null);
+	try {
+		r = await gmRequest('GET', emuleUrl + '?pass=' + encodeURIComponent(emulePwd), null, null);
+		login = amuleWebLogin(r);
+		if (login != null) {
+			showStatus(login, false);
+			return;
+		}
+		await gmRequest('GET', req.url, null, null, sendingTimeout(req.count));
+		try {
+			found = await amuleWebFound(emuleUrl, req.hashes);
+		}
+		catch (e) {
+			// the links are sent: only their check failed, they may well be added
+			trace('sendToAmuleWeb() ' + e);
+			showStatus('Links sent, but the transfer list of aMule could not be read: check it', 'doubt');
+			return;
+		}
+		if (found == req.count) {
+			showStatus(req.count + ' link(s) added to aMule', true);
+		}
+		else {
+			showStatus(found + ' of ' + req.count + ' link(s) found in the transfer list of aMule: check it', 'doubt');
+		}
+	}
+	catch (e) {
+		trace('sendToAmuleWeb() ' + e);
+		if (e.timeout) {
+			showStatus('aMule has not answered within ' + Math.round(e.timeout / 1000) + ' s: the links may still be added, check aMule', false);
+		}
+		else {
+			showStatus('aMule can not be reached at ' + emuleUrl, false);
+		}
+	}
+	finally {
+		setSending(false);
+	}
+}
+
+/**
+* The category of a sending to amuleweb (aMule 2.x), encoded in its url
+* amuleweb 2.3.3 compares the name it receives with the names of its categories as if it had read
+* it in Latin-1: a name with accents sent in UTF-8 matches no category, and the links are then
+* dropped without any message (its own form does so too). It is therefore sent as amuleweb reads
+* it: each byte of its UTF-8 form taken as a character, then encoded. A name without accents is
+* unchanged. Checked on aMule 2.3.3: the links land in the accented category.
+* @param cat the name of the category
+* @return the name encoded for the url
+*/
+function amuleWebCategory(cat) {
+	var bytes = new TextEncoder().encode(String(cat));
+	return encodeURIComponent(Array.prototype.map.call(bytes, function (b) { return String.fromCharCode(b); }).join(''));
+}
+
+/**
+* The answer of amuleweb (aMule 2.x) to a login (?pass=): null when the session is open (a page that
+* goes on to amuleweb-main-dload.php), or the message of the error
+* @param r the answer, from gmRequest()
+* @param url the address of aMule (the setting when not given)
+*/
+function amuleWebLogin(r, url) {
+	if (r.status == 200 && /<form[^>]*name=["']?login/i.test(r.text)) {
+		return 'aMule refused the password';
+	}
+	if (r.status == 200 && /amuleweb-main/i.test(r.text)) {
+		return null;
+	}
+	return 'No aMule 2.x web interface at ' + (url || emuleUrl);
+}
+
+/**
+* How many of the links sent are in the downloads of amuleweb (aMule 2.x), found by their hash:
+* each download has a checkbox named after its hash. aMule lists them at once (0.03 s on aMule
+* 2.3.3); the list is read again for a few seconds while some are missing.
+* @param url the address of aMule
+* @param hashes the hashes of the links sent, in capitals
+* @return a promise of the number of them found (a link already there counts as found)
+*/
+async function amuleWebFound(url, hashes) {
+	var end = Date.now() + 5000;
+	var listed, found;
+
+	while (true) {
+		listed = (await gmRequest('GET', url + 'amuleweb-main-dload.php', null, null)).text.toUpperCase();
+		found = hashes.filter(function (h) { return h && listed.indexOf('NAME="' + h + '"') != -1; }).length;
+		if (found == hashes.length || Date.now() > end) {
+			return found;
+		}
+		await new Promise(function (resolve) { setTimeout(resolve, 500); });
+	}
+}
+
+/**
+* The value of an HTTP Basic authorization: the user and the password, in UTF-8, in base 64
+*/
+function basicAuth(user, password) {
+	var bytes = new TextEncoder().encode(user + ':' + password);
+	return 'Basic ' + btoa(Array.prototype.map.call(bytes, function (b) { return String.fromCharCode(b); }).join(''));
+}
+
+/**
+* Send ed2k links to MLDonkey through its web interface, without a window (SF-7.14)
+* MLDonkey asks for HTTP Basic (a user and a password): without them, the browser asked for them
+* in its own dialog. The request is the one that a window used to open, with this authorization.
+* MLDonkey answers a line per link (checked on MLDonkey 3.2.1): "Added link", or "Unable to match
+* URL", with "already in download queue" for a link already there.
+* @param req the request made by getAddLink(): {url, count}
+*/
+async function sendToMldonkey(req) {
+	var r, result;
+
+	if (sendingBusy) {
+		trace('sendToMldonkey() a sending is already in progress, ignored');
+		return;
+	}
+	if (req.count == 0) {
+		showStatus('No ed2k link to send', false);
+		return;
+	}
+	trace('sendToMldonkey() ' + req.count + ' link(s)');
+	setSending(true);
+	showStatus('Please wait', null);
+	try {
+		r = await gmRequest('GET', req.url, null, basicAuth(emuleUser, emulePwd), sendingTimeout(req.count));
+		result = mldonkeyResult(req.count, r, emuleUrl);
+		showStatus(result[0], result[1]);
+	}
+	catch (e) {
+		trace('sendToMldonkey() ' + e);
+		if (e.timeout) {
+			showStatus('MLDonkey has not answered within ' + Math.round(e.timeout / 1000) + ' s: the links may still be added, check MLDonkey', false);
+		}
+		else {
+			showStatus('MLDonkey can not be reached at ' + emuleUrl, false);
+		}
+	}
+	finally {
+		setSending(false);
+	}
+}
+
+/**
+* The message for the answer of MLDonkey to a sending, and its kind
+* @param count the number of links sent
+* @param r the answer, from gmRequest()
+* @param url the address of MLDonkey
+* @return [message, kind]: kind true (every link added or already there), false (refused, or an
+* error), 'doubt' (an answer of MLDonkey that tells nothing about the links)
+*/
+function mldonkeyResult(count, r, url) {
+	var added = (r.text.match(/Added link/g) || []).length;
+	var already = (r.text.match(/already in download queue/g) || []).length;
+	var unmatched = (r.text.match(/Unable to match URL/g) || []).length;
+	var refused = Math.max(0, unmatched - already);
+
+	if (r.status == 401) {
+		return ['MLDonkey refused the user or the password', false];
+	}
+	if (r.status != 200 || !/MLdonkey/i.test(r.text)) {
+		return ['No MLDonkey web interface at ' + url, false];
+	}
+	if (added + unmatched == 0) {
+		return ['Links sent, but the answer of MLDonkey is not understood: check its downloads', 'doubt'];
+	}
+	if (refused == 0) {
+		return [count + ' link(s) added to MLDonkey', true];
+	}
+	return [(count - refused) + ' link(s) added to MLDonkey, ' + refused + ' refused', false];
+}
+
+/**
+* Mark a sending to aMule, eMule or MLDonkey as in progress or finished
+* While it waits for its answer, the "Add all links" buttons are disabled, and the sendings
+* (sendToAmuleApi(), sendToEmule(), sendToAmuleWeb(), sendToMldonkey()) ignore any other one
+* (shortcut, click on a file name).
 * @param busy true when the sending starts, false when its answer has arrived
 */
 function setSending(busy) {
 	var buttons = document.querySelectorAll('#theDiv button.emlAdd');
 
-	amuleApiBusy = busy;
+	sendingBusy = busy;
 	for (var i=0; i<buttons.length; i++) {
 		buttons[i].disabled = busy;
 	}
 }
 
 /**
-* How long to wait for the answer of aMule to a sending
-* aMule answers only once every link is added, and its time grows faster than the number
-* of links: measured on aMule 3.1.0, 8 s for 500 links, 77 s for 2,000 links.
+* How long to wait for the answer of aMule 3.x or eMule to a sending
+* They answer only once every link is added, and this time grows with the number of links:
+* measured on aMule 3.1.0, 8 s for 500 links, 77 s for 2,000 links; on eMule 0.70b, 7 s for 500.
 * @param count the number of links sent
 * @return the time limit in milliseconds: 60 s, plus 100 ms per link
 */
-function amuleApiTimeout(count) {
+function sendingTimeout(count) {
 	return 60000 + 100 * count;
 }
 
@@ -1866,10 +2134,11 @@ function amuleApiTimeout(count) {
 * @param method the http method
 * @param url the full url
 * @param body the object to send as JSON, or null
-* @param token the bearer token, or null
+* @param token the bearer token, or the value of an HTTP Basic authorization (basicAuth()), or null
 * @param timeout the time limit in milliseconds (15 s when not given)
-* @return a promise of {status, json, retryAfter}, rejected when the server can not be
-* reached, or with an error whose timeout property is set when it did not answer in time
+* @return a promise of {status, json, text, retryAfter} (json: the answer read as JSON, or null;
+* text: the answer as it came), rejected when the server can not be reached, or with an error
+* whose timeout property is set when it did not answer in time
 */
 function gmRequest(method, url, body, token, timeout) {
 	timeout = timeout || 15000;
@@ -1879,7 +2148,7 @@ function gmRequest(method, url, body, token, timeout) {
 			headers['Content-Type'] = 'application/json';
 		}
 		if (token != null) {
-			headers['Authorization'] = 'Bearer ' + token;
+			headers['Authorization'] = /^Basic /.test(token) ? token : 'Bearer ' + token;
 		}
 		GM_xmlhttpRequest({
 			method: method,
@@ -1896,7 +2165,7 @@ function gmRequest(method, url, body, token, timeout) {
 				catch (e) {
 					// not a JSON answer: only the status is used
 				}
-				resolve({status: res.status, json: json, retryAfter: retry ? retry[1] : null});
+				resolve({status: res.status, json: json, text: res.responseText || '', retryAfter: retry ? retry[1] : null});
 			},
 			onerror: function () { reject(new Error('network error')); },
 			ontimeout: function () {
@@ -1960,11 +2229,12 @@ function amuleApiResult(links, r) {
 /**
 * Show the result of a sending to the user
 * In the popup, a line under the top toolbar. With the popup closed there is nowhere to
-* show it: only the errors are then shown, in an alert, so that a failure is never silent.
-* While waiting (ok = null), the message is followed by animated dots, until the next
-* message replaces it.
+* show it: only the errors and the doubts are then shown, in an alert, so that a failure is
+* never silent. While waiting (ok = null), the message is followed by animated dots, until the
+* next message replaces it.
 * @param msg the message
-* @param ok true for a success, false for an error, null while waiting
+* @param ok true for a success (green), false for an error (red), 'doubt' for an answer that is
+* not understood (orange: the links may still be added), null while waiting
 */
 function showStatus(msg, ok) {
 	var container = document.getElementById('theDiv');
@@ -1978,7 +2248,7 @@ function showStatus(msg, ok) {
 		statusTimer = null;
 	}
 	if (container == null) {
-		if (ok === false) {
+		if (ok === false || ok === 'doubt') {
 			alert('Emule Linker: ' + msg);
 		}
 		return;
@@ -2001,15 +2271,8 @@ function showStatus(msg, ok) {
 		}, 400);
 		return;
 	}
-	line.style.color = ok ? '#060' : '#c00';
+	line.style.color = ok === 'doubt' ? '#a65f00' : ok ? '#060' : '#c00';
 	line.textContent = msg;
-}
-
-/**
-* Wait for x milliseconds
-*/
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 // -------------------------------------------------------------------------
@@ -2067,12 +2330,12 @@ function getAddLink(links) {
 		tmp=links[i].split('|');
 
 		// we encode the filename
-        try {
-            tmp[2]=encodeURIComponent(decodeURIComponent(tmp[2]));
-        }
-        catch (e) {
-            trace("Error in decoding and re-encoding filename");
-        }
+		try {
+			tmp[2]=encodeURIComponent(decodeURIComponent(tmp[2]));
+		}
+		catch (e) {
+			trace("Error in decoding and re-encoding filename");
+		}
 
 		tmp=tmp.join('|');
 
@@ -2089,60 +2352,71 @@ function getAddLink(links) {
 		case 'local':
 			// a raw ed2k link is not a valid url: recent Chrome turns it into about:blank
 			url = links.map(encodeEd2kLink).join('\n');
-		  break;
-
-    case 'emule':
-      // GET method: then we encode the link (so the filename is encoded twice)
-      lnk=encodeURIComponent(lnk);
-      url = emuleUrl + "?w=password&p=" + emulePwd + "&cat=" + cat + "&c=" + lnk;
-		  break;
-
-    case 'amule':
-      if(cat == "0") {
-        cat = "all";
-      }
-
-      // Using Get method: we encode the link (so the filename is encoded twice)
-      lnk=encodeURIComponent(lnk);
-      if(emulePwd != '') {
-          url = emuleUrl + "footer.php?pass=" + emulePwd + "&selectcat=" + cat + "&Submit=Download+link&ed2klink=" + lnk;
-      } else {
-          url = emuleUrl + "footer.php?selectcat=" + cat + "&Submit=Download+link&ed2klink=" + lnk;
-      }
-
-      // Using Post method
-      /*url = new Array();
-      url["selectcat"] = cat;	// the category
-      url["Submit"] = "Download+link";	// Submit
-      url["ed2klink"] = lnk;	// the ed2k links*/
 			break;
 
-    case 'amuleapi':
-      // JSON POST (sendToAmuleApi()): the links are not in a url, so they are not encoded a
-      // second time. Lines that are not ed2k links (empty lines of the edit box) are left out:
-      // the API would refuse the whole request
-      url = {
-        links: lnk.split('\n').map(function (l) { return l.trim(); })
-                  .filter(function (l) { return /^ed2k:\/\//i.test(l); }),
-        category_index: parseInt(cat, 10) || 0
-      };
-      break;
-
-    case 'mldonkey':
-			// GET method: then we encode the link (so the filename is encoded twice)
-      lnk=encodeURIComponent(lnk);
-      url = emuleUrl + "submit?jvcmd=multidllink&links=" + lnk;
+		case 'emule':
+			// GET request of the script (sendToEmule()), no window: the links are in the url, so they are
+			// encoded (the filename is then encoded twice), the password and the category too. Lines that
+			// are not ed2k links (empty lines of the edit box) are left out: eMule does not check them, it
+			// would answer that they are added
+			lnk = lnk.split('\n').map(function (l) { return l.trim(); })
+				.filter(function (l) { return /^ed2k:\/\//i.test(l); });
+			url = {
+				count: lnk.length,
+				url: emuleUrl + "?w=password&p=" + encodeURIComponent(emulePwd) + "&cat=" + encodeURIComponent(cat) + "&c=" + encodeURIComponent(lnk.join('\n'))
+			};
 			break;
 
-    case 'custom':
+		case 'amule':
+			if(cat == "0") {
+				cat = "all";
+			}
+
+			// GET requests of the script (sendToAmuleWeb()), no window: the login, then the links, the
+			// session being kept by its cookie. The links are in the url, so they are encoded (the filename
+			// is then encoded twice), the category too (a name: amuleWebCategory()). Lines that are not
+			// ed2k links are left out; the hashes of the links are kept, to find them in the downloads.
+			lnk = lnk.split('\n').map(function (l) { return l.trim(); })
+				.filter(function (l) { return /^ed2k:\/\//i.test(l); });
+			url = {
+				count: lnk.length,
+				hashes: lnk.map(function (l) { return (l.split('|')[4] || '').toUpperCase(); }),
+				url: emuleUrl + "footer.php?selectcat=" + amuleWebCategory(cat) + "&Submit=Download+link&ed2klink=" + encodeURIComponent(lnk.join('\n'))
+			};
+			break;
+
+		case 'amuleapi':
+			// JSON POST (sendToAmuleApi()): the links are not in a url, so they are not encoded a
+			// second time. Lines that are not ed2k links (empty lines of the edit box) are left out:
+			// the API would refuse the whole request
+			url = {
+				links: lnk.split('\n').map(function (l) { return l.trim(); })
+					.filter(function (l) { return /^ed2k:\/\//i.test(l); }),
+				category_index: parseInt(cat, 10) || 0
+			};
+			break;
+
+		case 'mldonkey':
+			// GET request of the script (sendToMldonkey()), no window, with HTTP Basic: the links are in
+			// the url, so they are encoded (the filename is then encoded twice). Lines that are not ed2k
+			// links are left out.
+			lnk = lnk.split('\n').map(function (l) { return l.trim(); })
+				.filter(function (l) { return /^ed2k:\/\//i.test(l); });
+			url = {
+				count: lnk.length,
+				url: emuleUrl + "submit?jvcmd=multidllink&links=" + encodeURIComponent(lnk.join('\n'))
+			};
+			break;
+
+		case 'custom':
 			// POST method: no need to encode the link
-      url = new Array();
-      url["cat"] = cat;	// the category
-      url["ref"] = window.location;	// the post where the links come from
-      url["ed2k"] = lnk;	// the ed2k links
+			url = new Array();
+			url["cat"] = cat;	// the category
+			url["ref"] = window.location;	// the post where the links come from
+			url["ed2k"] = lnk;	// the ed2k links
 			break;
 
-    default:
+		default:
 			break;
 	}
 	return url;
@@ -2173,8 +2447,9 @@ function scriptConfig() {
 		'section1' : { section: ['Servers', 'Where the ed2k links are sent: the servers you use, and the one that receives the links'], label: '', type: 'hidden'},
 		'ed2kDlMethod': { label: 'Ed2k Download Method', title: 'How the links are sent:\nLocal: to the application of your system that handles ed2k links (default)\neMule (web): to eMule, on this computer or another one, through its web interface\naMule 3.x (amuleapi): to aMule 3.1 or later, through its REST API\naMule 2.x (amuleweb): to aMule 2.x, through its web interface\nMLDonkey (web): to MLDonkey, through its web interface\nCustom: posted to your own server', type:'select', options:{'local':'Local (your system default)','emule':'eMule (web)','amuleapi':'aMule 3.x (amuleapi)','amule':'aMule 2.x (amuleweb)','mldonkey':'MLDonkey (web)','custom':'Custom (post to your own server)'}, default: ed2kDlMethod}, // default value doesn't work with a dropdown menu => see bugfix in the lib
 		'emuleUrl': { label: 'Server URL', title : 'The address of the web interface of eMule, aMule or MLDonkey, or of your own server.\nFor instance http://127.0.0.1:4711/ (a final / is added when missing).', type: 'text', size: 32, default: emuleUrl },
-		'emulePwd': { label: 'Password', title : 'The password of the web interface. Optional: leave it empty if it has none.\nFor aMule 3.x, its admin password. Test checks the Server URL and the password, without saving them.', type: 'text', size: 20, default: emulePwd },
-		'emuleCat': { label: 'Category', title : 'The categories offered in the popup, as name=value, separated by ;\nA * before a name makes it the default one.\neMule and aMule 3.x: the value is the number of the category (0: the default category), e.g. *default=0;Video=2\naMule 3.x: Import fills the field with the categories of aMule, in its order.\naMule 2.x: the value is the name of the category, e.g. *Audio=audio;Video=Video', type: 'text', size: 40, default: catToStr(emuleCat) },
+		'emuleUser': { label: 'User', title : 'The user of the web interface of MLDonkey (admin by default).', type: 'text', size: 20, default: emuleUser },
+		'emulePwd': { label: 'Password', title : 'The password of the web interface. Optional: leave it empty if it has none.\nFor aMule 3.x, its admin password. Test (eMule, aMule, MLDonkey) checks the Server URL and the password, without saving them.', type: 'text', size: 20, default: emulePwd },
+		'emuleCat': { label: 'Category', title : 'The categories offered in the popup, as name=value, separated by ;\nA * before a name makes it the default one.\neMule and aMule 3.x: the value is the number of the category (0: the default category), e.g. *default=0;Video=2\neMule and aMule: Import fills the field with their categories, in their order.\naMule 2.x: the value is the name of the category, e.g. *Audio=audio;Video=Video (a ; in a name is written \\;)', type: 'text', size: 40, default: catToStr(emuleCat) },
 		'section2' : { section: ['Popup', 'How the popup is displayed'], label: '', type: 'hidden'},
 		'popupPos': { label: 'Popup Position', title : 'fixed: the popup stays in view when the page scrolls.\nabsolute: the popup stays at the top of the page.', type: 'radio', options:['absolute','fixed'], default: popupPos },
 		'popupHeight': { label: 'Max Popup Height in px (0=unlimited)', title : 'The maximum height of the popup, in pixels: at least 40, or 0 for unlimited.', type: 'int', size: 6, default: popupHeight },
@@ -2182,13 +2457,13 @@ function scriptConfig() {
 		'section3' : { section: ['Edit box', 'The size of the text box of the edit mode'], label: '', type: 'hidden'},
 		'editCol': { label: 'Number of columns', title : 'The width of the edit box, in characters.', type: 'int', size: 4, default: editCol },
 		'editRow': { label: 'Number of rows', title : 'The height of the edit box, in lines.', type: 'int', size: 4, default: editRow },
-		},
-		{
+	},
+	{
 		//open: function() { GM_config.sections2tabs(); }, // not working (not included into the library)
 		open: function() { settingsDialogOpened(); },
 		close: function() { settingsDialogClosed(); },
 		save: function() { storeServers(); location.reload(); } // reload the page when configuration was changed
-		}
+	}
 	);
 
 	// invoke the dialog
@@ -2365,6 +2640,14 @@ function newServer(name, method) {
 		server[METHOD_SETTINGS[i]] = GM_config.fields[METHOD_SETTINGS[i]].settings['default'];
 	}
 	return server;
+}
+
+/**
+* A setting of a server, or its default value when the server has none (a server stored by an
+* older version, before the setting existed: User, in 0.12)
+*/
+function serverSetting(server, id) {
+	return server[id] != null ? server[id] : GM_config.fields[id].settings['default'];
 }
 
 /**
@@ -2590,14 +2873,14 @@ function showServers() {
 	settingsField('serverName').value = server.name;
 	settingsField('serverMethod').value = server.method;
 	for (var i=0; i<METHOD_SETTINGS.length; i++) {
-		settingsField(METHOD_SETTINGS[i]).value = server[METHOD_SETTINGS[i]];
+		settingsField(METHOD_SETTINGS[i]).value = serverSetting(server, METHOD_SETTINGS[i]);
 	}
 	showServerFields();
 }
 
 /**
 * Show, in the settings of the server being edited, the fields that its method uses only, and
-* the Test and Import buttons for aMule 3.x (amuleapi) only
+* the Test button for eMule, aMule and MLDonkey, the Import button for eMule and aMule (MLDonkey has no categories)
 */
 function showServerFields() {
 	var method = settingsField('serverMethod').value;
@@ -2605,7 +2888,8 @@ function showServerFields() {
 		document.getElementById('GM_config_' + METHOD_SETTINGS[i] + '_var').style.display =
 			(METHOD_FIELDS[method].indexOf(METHOD_SETTINGS[i]) != -1) ? '' : 'none';
 	}
-	document.getElementById('GM_config_server_fields').classList.toggle('noapi', method != 'amuleapi');
+	document.getElementById('GM_config_server_fields').classList.toggle('notest', !TEST_ACTIONS.hasOwnProperty(method));
+	document.getElementById('GM_config_server_fields').classList.toggle('noimport', !IMPORT_ACTIONS.hasOwnProperty(method));
 }
 
 /**
@@ -2759,7 +3043,7 @@ function prepareServersForSaving() {
 	var defaults = newServer('', 'emule');
 	settingsField('ed2kDlMethod').value = server ? server.method : 'local';
 	for (var i=0; i<METHOD_SETTINGS.length; i++) {
-		settingsField(METHOD_SETTINGS[i]).value = (server || defaults)[METHOD_SETTINGS[i]];
+		settingsField(METHOD_SETTINGS[i]).value = serverSetting(server || defaults, METHOD_SETTINGS[i]);
 	}
 }
 
@@ -2804,9 +3088,8 @@ function showNotice(text, undo, before) {
 }
 
 /**
-* Add the buttons of aMule 3.x (amuleapi) to the settings of a server: Test after Show, on the row
-* of the password, and Import after the Category field. They are shown for this method only
-* (showServerFields()), and use what is typed in the dialog, saved or not.
+* Add the Test and Import buttons to the settings of a server: Test after Show, on the row of the
+* password, and Import after the Category field, for eMule and aMule (showServerFields()). They use what is typed in the dialog, saved or not.
 */
 function addApiButtons() {
 	var cat = settingsField('emuleCat');
@@ -2823,16 +3106,17 @@ function addApiButtons() {
 	};
 
 	settingsField('emulePwd').parentNode.appendChild(		// the box of the password and of Show
-		make('GM_config_testBtn', 'Test', 'Test the server URL and the password', testAmuleApi));
+		make('GM_config_testBtn', 'Test', 'Test the server URL and the password', testServer));
 	catbox.className = 'catbox';
 	cat.parentNode.insertBefore(catbox, cat);
 	catbox.appendChild(cat);
-	catbox.appendChild(make('GM_config_importBtn', 'Import', 'Fill the field with the categories of aMule',
-		importAmuleCategories));
+	catbox.appendChild(make('GM_config_importBtn', 'Import', 'Fill the field with the categories of eMule or aMule',
+		importCategories));
 
 	// a result no longer matches the fields once they are changed
 	settingsField('emuleUrl').addEventListener('input', function () { removeApiStatus('test'); }, false);
 	settingsField('emulePwd').addEventListener('input', function () { removeApiStatus('test'); }, false);
+	settingsField('emuleUser').addEventListener('input', function () { removeApiStatus('test'); }, false);
 	cat.addEventListener('input', function () { removeApiStatus('import'); }, false);
 }
 
@@ -2922,7 +3206,8 @@ function startApiAction(button, waiting) {
 		buttons[i].disabled = true;
 	}
 	ctx = {button: button, label: button.textContent, url: url, api: url + 'api/v1/', edited: dialogEdited,
-		typed: [settingsField('emuleUrl').value, settingsField('emulePwd').value, settingsField('emuleCat').value]};
+		typed: [settingsField('emuleUrl').value, settingsField('emulePwd').value, settingsField('emuleCat').value,
+			settingsField('emuleUser').value]};
 	button.textContent = waiting;
 	return ctx;
 }
@@ -2946,7 +3231,8 @@ function finishApiAction(ctx, token, result) {
 		gmRequest('POST', ctx.api + 'auth/logout', null, token).catch(function () {});
 	}
 	now = GM_config.isOpen && document.contains(ctx.button) ?
-		[settingsField('emuleUrl').value, settingsField('emulePwd').value, settingsField('emuleCat').value] : null;
+		[settingsField('emuleUrl').value, settingsField('emulePwd').value, settingsField('emuleCat').value,
+			settingsField('emuleUser').value] : null;
 	if (result == null || now == null || dialogEdited != ctx.edited || now.join('\n') != ctx.typed.join('\n')) {
 		trace('finishApiAction() result ignored: the dialog has changed');
 		return;
@@ -2959,18 +3245,145 @@ function finishApiAction(ctx, token, result) {
 
 /**
 * The message for a request of Test or Import that got no answer
+* @param client the name of the client: aMule when not given, or eMule
 */
-function apiFailure(e, url) {
-	return e.timeout ? 'aMule has not answered within ' + Math.round(e.timeout / 1000) + ' s'
-		: 'aMule can not be reached at ' + url;
+function apiFailure(e, url, client) {
+	client = client || 'aMule';
+	return e.timeout ? client + ' has not answered within ' + Math.round(e.timeout / 1000) + ' s'
+		: client + ' can not be reached at ' + url;
 }
 
 /**
-* Test button: log in to aMule with the address and the password typed, then read its version and
-* its connection state (SF-8.17). Nothing is saved.
+* Test button, for the method of the server displayed: eMule, aMule 3.x, aMule 2.x or MLDonkey
+* (TEST_ACTIONS, SF-8.16, SF-8.17)
 */
-async function testAmuleApi() {
-	var ctx = startApiAction(this, 'Test…');
+function testServer() {
+	var method = settingsField('serverMethod').value;
+	if (TEST_ACTIONS.hasOwnProperty(method)) {
+		TEST_ACTIONS[method](this);
+	}
+}
+
+/**
+* Test button, MLDonkey: its version (submit?q=version), asked with the user and the password typed
+* (HTTP Basic) (SF-8.17). Nothing is saved, nothing is sent.
+* @param button the Test button
+*/
+async function testMldonkey(button) {
+	var ctx = startApiAction(button, 'Test…');
+	var result = null;
+	var r, version;
+
+	if (ctx == null) {
+		return;
+	}
+	trace('testMldonkey() ' + ctx.url);
+	try {
+		r = await gmRequest('GET', ctx.url + 'submit?q=version', null, basicAuth(ctx.typed[3], ctx.typed[1]));
+		version = /MLNet\s+(\d[\w.]*)/.exec(r.text);
+		if (r.status == 401) {
+			result = {which: 'test', kind: 'ko', text: 'MLDonkey refused the user or the password'};
+		}
+		else if (r.status == 200 && /MLdonkey/i.test(r.text)) {
+			result = {which: 'test', kind: 'ok', text: 'Connected to MLDonkey' + (version ? ' ' + version[1].replace(/\.git$/, '') : '') + '.'};
+		}
+		else {
+			result = {which: 'test', kind: 'ko', text: 'No MLDonkey web interface at ' + ctx.url};
+		}
+	}
+	catch (e) {
+		trace('testMldonkey() ' + e);
+		result = {which: 'test', text: apiFailure(e, ctx.url, 'MLDonkey'), kind: 'ko'};
+	}
+	finally {
+		finishApiAction(ctx, null, result);
+	}
+}
+
+/**
+* Test button, aMule 2.x: log in to amuleweb with the address and the password typed, then read the
+* version of aMule in the first lines of its log (log.php: "Initialising aMuleD 2.3.3 ...") (SF-8.17).
+* amuleweb has no logout: its session ends by itself. Nothing is saved, nothing is sent.
+* @param button the Test button
+*/
+async function testAmuleWeb(button) {
+	var ctx = startApiAction(button, 'Test…');
+	var result = null;
+	var r, error, version;
+
+	if (ctx == null) {
+		return;
+	}
+	trace('testAmuleWeb() ' + ctx.url);
+	try {
+		r = await gmRequest('GET', ctx.url + '?pass=' + encodeURIComponent(ctx.typed[1]), null, null);
+		error = amuleWebLogin(r, ctx.url);
+		if (error != null) {
+			result = {which: 'test', kind: 'ko', text: error};
+			return;
+		}
+		r = await gmRequest('GET', ctx.url + 'log.php', null, null);
+		version = /Initialising aMule\w*\s+([\d][\w.]*)/.exec(r.text);
+		result = {which: 'test', kind: 'ok', text: 'Connected to aMule ' + (version ? version[1] : '2.x') + '.'};
+	}
+	catch (e) {
+		trace('testAmuleWeb() ' + e);
+		result = {which: 'test', text: apiFailure(e, ctx.url), kind: 'ko'};
+	}
+	finally {
+		finishApiAction(ctx, null, result);
+	}
+}
+
+/**
+* Test button, eMule: log in to its web interface with the address and the password typed, as
+* the login page of eMule does, then log out (SF-8.17). eMule 0.70b answers with its interface,
+* which holds a session and its version in its title, or with its login page again when the
+* password is wrong. Nothing is saved, nothing is sent.
+* @param button the Test button
+*/
+async function testEmule(button) {
+	var ctx = startApiAction(button, 'Test…');
+	var result = null;
+	var r, session, title;
+
+	if (ctx == null) {
+		return;
+	}
+	trace('testEmule() ' + ctx.url);
+	try {
+		r = await gmRequest('GET', ctx.url + '?w=password&p=' + encodeURIComponent(ctx.typed[1]), null, null);
+		session = /[?&]ses=(-?\d+)/.exec(r.text);
+		title = /<title>\s*([^<]*?)\s*-\s*Web Interface\s*<\/title>/i.exec(r.text);
+		if (r.status == 200 && session) {
+			result = {which: 'test', kind: 'ok',
+				text: 'Connected to ' + (title && /emule/i.test(title[1]) ? title[1] : 'eMule') + '.'};
+			// the session opened by this test is closed at once
+			gmRequest('GET', ctx.url + '?ses=' + session[1] + '&w=logout', null, null).catch(function () {});
+		}
+		else if (r.status == 200 && /<input[^>]*type=["']?password/i.test(r.text)) {
+			result = {which: 'test', kind: 'ko', text: 'eMule refused the password'};
+		}
+		else {
+			result = {which: 'test', kind: 'ko', text: 'No eMule web interface at ' + ctx.url};
+		}
+	}
+	catch (e) {
+		trace('testEmule() ' + e);
+		result = {which: 'test', text: apiFailure(e, ctx.url, 'eMule'), kind: 'ko'};
+	}
+	finally {
+		finishApiAction(ctx, null, result);
+	}
+}
+
+/**
+* Test button, aMule 3.x: log in to aMule with the address and the password typed, then read its
+* version and its connection state (SF-8.17). Nothing is saved.
+* @param button the Test button
+*/
+async function testAmuleApi(button) {
+	var ctx = startApiAction(button, 'Test…');
 	var token = null;
 	var result = null;
 	var r, version, state, networks, name;
@@ -3020,15 +3433,134 @@ async function testAmuleApi() {
 }
 
 /**
-* Import button: read the categories of aMule, every page of them, and fill the Category field
-* with them (SF-8.18). The field is highlighted, and an Undo button puts it back. Nothing is saved.
+* Import button, for the method of the server displayed: eMule, aMule 3.x or aMule 2.x
+* (IMPORT_ACTIONS, SF-8.18)
 */
-async function importAmuleCategories() {
-	var ctx = startApiAction(this, 'Import…');
+function importCategories() {
+	var method = settingsField('serverMethod').value;
+	if (IMPORT_ACTIONS.hasOwnProperty(method)) {
+		IMPORT_ACTIONS[method](this);
+	}
+}
+
+/**
+* Import button, aMule 2.x: log in to amuleweb, then read its categories in the list of its form to
+* add a link (footer.php, <select name="selectcat">), in its order (SF-8.18). aMule 2.x knows its
+* categories by their name: each one is imported as name=name (all=all for its first one).
+* @param button the Import button
+*/
+async function importAmuleWebCategories(button) {
+	var ctx = startApiAction(button, 'Import…');
+	var result = null;
+	var r, error, options, cats;
+
+	if (ctx == null) {
+		return;
+	}
+	trace('importAmuleWebCategories() ' + ctx.url);
+	try {
+		r = await gmRequest('GET', ctx.url + '?pass=' + encodeURIComponent(ctx.typed[1]), null, null);
+		error = amuleWebLogin(r, ctx.url);
+		if (error != null) {
+			result = {which: 'import', kind: 'ko', text: error};
+			return;
+		}
+		r = await gmRequest('GET', ctx.url + 'footer.php', null, null);
+		options = new DOMParser().parseFromString(r.text, 'text/html').querySelectorAll('select[name="selectcat"] option');
+		if (options.length == 0) {
+			result = {which: 'import', kind: 'ko', text: 'No aMule 2.x web interface at ' + ctx.url};
+			return;
+		}
+		cats = [].map.call(options, function (o) { return {index: o.textContent, name: o.textContent}; });
+		result = importResult(cats, ctx, 'aMule', true);
+	}
+	catch (e) {
+		trace('importAmuleWebCategories() ' + e);
+		result = {which: 'import', text: apiFailure(e, ctx.url), kind: 'ko'};
+	}
+	finally {
+		finishApiAction(ctx, null, result);
+	}
+}
+
+/**
+* The result of an import: the categories read merged into the field typed (mergeCategories()),
+* applied to the field once shown, with Undo; or a message when the field already holds them
+* @param cats the categories read: [{index, name}, ...]
+* @param ctx what startApiAction() returned
+* @param client eMule or aMule
+* @param byName true for aMule 2.x, which knows its categories by their name (mergeCategories())
+*/
+function importResult(cats, ctx, client, byName) {
+	var merged = mergeCategories(cats, ctx.typed[2], client, byName);
+	if (merged.value == ctx.typed[2].trim()) {
+		return {which: 'import', kind: 'ok', text: 'The field already holds the categories of ' + client + '.'};
+	}
+	return {which: 'import', kind: 'ok', text: merged.message,
+		apply: function () {
+			settingsField('emuleCat').value = merged.value;
+			document.getElementById('GM_config_emuleCat_var').classList.add('changed');
+		},
+		undo: function () {
+			settingsField('emuleCat').value = ctx.typed[2];
+		}};
+}
+
+/**
+* Import button, eMule: log in to its web interface, as Test does, read its categories in the
+* list of its form to add a link (<select name="cat">: index and name, in its order, without the
+* display filters of its menu), then log out (SF-8.18). The names are read by the HTML parser of
+* the browser (entities, accents). Nothing is saved, nothing is sent.
+* @param button the Import button
+*/
+async function importEmuleCategories(button) {
+	var ctx = startApiAction(button, 'Import…');
+	var result = null;
+	var r, session, options, cats;
+
+	if (ctx == null) {
+		return;
+	}
+	trace('importEmuleCategories() ' + ctx.url);
+	try {
+		r = await gmRequest('GET', ctx.url + '?w=password&p=' + encodeURIComponent(ctx.typed[1]), null, null);
+		session = /[?&]ses=(-?\d+)/.exec(r.text);
+		options = r.status == 200 ?
+			new DOMParser().parseFromString(r.text, 'text/html').querySelectorAll('select[name="cat"] option') : [];
+		if (session) {
+			gmRequest('GET', ctx.url + '?ses=' + session[1] + '&w=logout', null, null).catch(function () {});
+		}
+		if (session && options.length > 0) {
+			cats = [].map.call(options, function (o) { return {index: o.value, name: o.textContent}; });
+			result = importResult(cats, ctx, 'eMule');
+		}
+		else if (r.status == 200 && /<input[^>]*type=["']?password/i.test(r.text)) {
+			result = {which: 'import', kind: 'ko', text: 'eMule refused the password'};
+		}
+		else {
+			result = {which: 'import', kind: 'ko', text: 'No eMule web interface at ' + ctx.url};
+		}
+	}
+	catch (e) {
+		trace('importEmuleCategories() ' + e);
+		result = {which: 'import', text: apiFailure(e, ctx.url, 'eMule'), kind: 'ko'};
+	}
+	finally {
+		finishApiAction(ctx, null, result);
+	}
+}
+
+/**
+* Import button, aMule 3.x: read the categories of aMule, every page of them, and fill the Category
+* field with them (SF-8.18). The field is highlighted, and an Undo button puts it back. Nothing is saved.
+* @param button the Import button
+*/
+async function importAmuleCategories(button) {
+	var ctx = startApiAction(button, 'Import…');
 	var token = null;
 	var result = null;
 	var cats = [];
-	var r, merged;
+	var r;
 
 	if (ctx == null) {
 		return;
@@ -3050,20 +3582,7 @@ async function importAmuleCategories() {
 			}
 			cats = cats.concat(r.json.categories);
 		} while (r.json.categories.length > 0 && cats.length < (r.json.total || 0) && cats.length < 1000);
-		merged = mergeAmuleCategories(cats, ctx.typed[2]);
-		if (merged.value == ctx.typed[2].trim()) {
-			result = {which: 'import', kind: 'ok', text: 'The field already holds the categories of aMule.'};
-		}
-		else {
-			result = {which: 'import', kind: 'ok', text: merged.message,
-				apply: function () {
-					settingsField('emuleCat').value = merged.value;
-					document.getElementById('GM_config_emuleCat_var').classList.add('changed');
-				},
-				undo: function () {
-					settingsField('emuleCat').value = ctx.typed[2];
-				}};
-		}
+		result = importResult(cats, ctx, 'aMule');
 	}
 	catch (e) {
 		trace('importAmuleCategories() ' + e);
@@ -3075,17 +3594,22 @@ async function importAmuleCategories() {
 }
 
 /**
-* The Category setting made of the categories of aMule (Import, SF-8.18)
-* In the order of aMule, each one with its name and its index, the category 0 included; Default=0
-* when aMule has none. The default one (*) stays on the category of the same name, whatever the
-* case, or else goes to the first one. The characters of the syntax of the field (; and =, a
-* leading *) are taken out of the names, and a category without a name is named after its index.
-* @param cats the categories of aMule: [{index, name}, ...]
+* The Category setting made of the categories of the client (Import, SF-8.18)
+* In the order of the client, each one with its name and its index, the category 0 included (aMule
+* names it Default, eMule All); Default=0 when the client has none. The default one (*) stays on the
+* category of the same name, whatever the case, or else goes to the first one. The characters of
+* the syntax of the field (; and =, a leading *) are taken out of the names, and a category
+* without a name is named after its index.
+* @param cats the categories of the client: [{index, name}, ...]
 * @param current the value of the field before the import
+* @param client the name of the client in the message: aMule when not given, or eMule
+* @param byName true when the client knows its categories by their name (aMule 2.x): the value of
+* each one is then its name as the client knows it, an = included, a ; written \;
 * @return {value: the new value of the field, message: what changed}
 */
-function mergeAmuleCategories(cats, current) {
+function mergeCategories(cats, current, client, byName) {
 	var old = strToCat(String(current).trim());
+	client = client || 'aMule';
 	var lower = function (s) { return s.toLowerCase(); };
 	var names = function (list) { return list.slice(0, 3).join(', ') + (list.length > 3 ? ', …' : ''); };
 	var entries = [];
@@ -3101,16 +3625,18 @@ function mergeAmuleCategories(cats, current) {
 		}
 	}
 	for (var i=0; i<cats.length; i++) {
-		var index = parseInt(cats[i].index, 10);
-		var name = String(cats[i].name == null ? '' : cats[i].name)
-			.replace(/[;=]/g, ' ').replace(/^[\s*]+/, '').replace(/\s+/g, ' ').trim();
-		if (isNaN(index)) {
+		var index = byName ? null : parseInt(cats[i].index, 10);
+		var raw = String(cats[i].name == null ? '' : cats[i].name);
+		var name = raw.replace(/[;=]/g, ' ').replace(/^[\s*]+/, '').replace(/\s+/g, ' ').trim();
+		if (byName ? name == '' : isNaN(index)) {
 			continue;
 		}
-		entries.push({name: name || 'Category ' + index, index: index});
+		// aMule 2.x: the value is the name as aMule knows it, an = included (strToCat() reads the value
+		// after the first =), a ; written \; (the separator of the field)
+		entries.push({name: name || 'Category ' + index, index: byName ? raw.trim().replace(/;/g, '\\;') : index});
 	}
 	if (entries.length == 0) {
-		return {value: '*Default=0', message: 'aMule has no category: Default=0 is used.'};
+		return {value: '*Default=0', message: client + ' has no category: Default=0 is used.'};
 	}
 	def = entries.filter(function (e) { return oldDefault != '' && lower(e.name) == lower(oldDefault); })[0] || entries[0];
 	added = entries.filter(function (e) {
@@ -3127,7 +3653,7 @@ function mergeAmuleCategories(cats, current) {
 	if (removed.length > 0) {
 		parts.push(removed.length + ' removed (' + names(removed) + ')');
 	}
-	message = entries.length + (entries.length > 1 ? ' categories' : ' category') + ' imported from aMule'
+	message = entries.length + (entries.length > 1 ? ' categories' : ' category') + ' imported from ' + client
 		+ (parts.length ? ': ' + parts.join(', ') : '') + '. ' + def.name
 		+ (oldDefault != '' && lower(def.name) == lower(oldDefault) ? ' stays' : ' is now') + ' the default (*).';
 	return {value: entries.map(function (e) { return (e === def ? '*' : '') + e.name + '=' + e.index; }).join(';'),
@@ -3384,6 +3910,7 @@ function saveConfig() {
 	}
 
 	// the password is optional: eMule accepts a web interface without one
+	emuleUser = GM_config.get('emuleUser');
 	emulePwd = GM_config.get('emulePwd');
 
 	emuleCat = strToCat(GM_config.get('emuleCat'));
@@ -3440,8 +3967,9 @@ function catToStr(cat) {
 		if (cat[i].select==1) {
 			str +='*';
 		}
-		str +=cat[i].name+'=';
-		str +=cat[i].value +';';
+		// a ; in a name or a value is written \; (strToCat())
+		str +=String(cat[i].name).replace(/;/g, '\\;')+'=';
+		str +=String(cat[i].value).replace(/;/g, '\\;') +';';
 	}
 
 	trace('catToStr() -> ' + str);
@@ -3450,7 +3978,9 @@ function catToStr(cat) {
 
 /**
 * String to category array
-* Expected format: [*]name=value;[*]name=value;...  (the * marks the default category)
+* Expected format: [*]name=value;[*]name=value;...  (the * marks the default category). The value
+* is everything after the first =, and a ; in a name or a value is written \; (aMule 2.x knows its
+* categories by their name, which may hold them: A=B, test;23).
 * Invalid entries are skipped. Exactly one category ends up selected, so that the
 * drop-down list and the category sent (getSelectedCat()) always agree.
 * @param str the categories as entered in the settings
@@ -3458,8 +3988,8 @@ function catToStr(cat) {
 */
 function strToCat(str) {
 	var cat = new Array();
-	var tab = String(str).split(';');
-	var tmp, name, value, select;
+	var tab = String(str).split(/(?<!\\);/);	// the ; written \; are not separators
+	var equal, name, value, select;
 	var hasDefault = false;
 
 	//trace ('strToCat('+str+')');
@@ -3469,9 +3999,10 @@ function strToCat(str) {
 			continue;	// empty entry, typically after the last ;
 		}
 
-		tmp = tab[i].split('=');
-		name = tmp[0].trim();
-		value = (tmp.length > 1) ? tmp[1].trim() : '';
+		// the value is everything after the first =: an aMule 2.x category may hold one
+		equal = tab[i].indexOf('=');
+		name = (equal == -1 ? tab[i] : tab[i].slice(0, equal)).replace(/\\;/g, ';').trim();
+		value = (equal == -1) ? '' : tab[i].slice(equal + 1).replace(/\\;/g, ';').trim();
 		select = 0;
 
 		if (name.charAt(0) == '*') {
@@ -3514,61 +4045,61 @@ function strToCat(str) {
 * ex: post('/contact/', {name: 'Johnny Bravo'});
 */
 function post(path, params, method) {
-    method = method || "post"; // Set method to post by default if not specified.
+	method = method || "post"; // Set method to post by default if not specified.
 
-    // The rest of this code assumes you are not using a library.
-    // It can be made less wordy if you use one.
-    var form = document.createElement("form");
-    form.setAttribute("method", method);
-    form.setAttribute("action", path);
+	// The rest of this code assumes you are not using a library.
+	// It can be made less wordy if you use one.
+	var form = document.createElement("form");
+	form.setAttribute("method", method);
+	form.setAttribute("action", path);
 	form.setAttribute("target", "emule");
 
-    for(var key in params) {
-        if(params.hasOwnProperty(key)) {
-            var hiddenField = document.createElement("input");
-            hiddenField.setAttribute("type", "hidden");
-            hiddenField.setAttribute("name", key);
-            hiddenField.setAttribute("value", params[key]);
+	for(var key in params) {
+		if(params.hasOwnProperty(key)) {
+			var hiddenField = document.createElement("input");
+			hiddenField.setAttribute("type", "hidden");
+			hiddenField.setAttribute("name", key);
+			hiddenField.setAttribute("value", params[key]);
 
-            form.appendChild(hiddenField);
-         }
-    }
+			form.appendChild(hiddenField);
+		}
+	}
 
-    document.body.appendChild(form);
-    form.submit();
-    // the submission has started: the form is no longer needed, it would pile up at each sending
-    form.parentNode.removeChild(form);
+	document.body.appendChild(form);
+	form.submit();
+	// the submission has started: the form is no longer needed, it would pile up at each sending
+	form.parentNode.removeChild(form);
 }
 
 /**
- * Format bytes as human-readable text.
- *
- * @param bytes Number of bytes.
- * @param si True to use metric (SI) units, aka powers of 1000. False to use
- *           binary (IEC), aka powers of 1024.
- * @param dp Number of decimal places to display.
- *
- * @return Formatted string.
- */
+* Format bytes as human-readable text.
+*
+* @param bytes Number of bytes.
+* @param si True to use metric (SI) units, aka powers of 1000. False to use
+*           binary (IEC), aka powers of 1024.
+* @param dp Number of decimal places to display.
+*
+* @return Formatted string.
+*/
 function humanFileSize(bytes, si=false, dp=1) {
-  const thresh = si ? 1000 : 1024;
+	const thresh = si ? 1000 : 1024;
 
-  if (Math.abs(bytes) < thresh) {
-    return bytes + ' B';
-  }
+	if (Math.abs(bytes) < thresh) {
+		return bytes + ' B';
+	}
 
-  const units = si
-    ? ['kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
-    : ['KiB', 'MiB', 'GiB', 'TiB', 'PiB', 'EiB', 'ZiB', 'YiB'];
-  let u = -1;
-  const r = 10**dp;
+	const units = si
+		? ['kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
+		: ['KiB', 'MiB', 'GiB', 'TiB', 'PiB', 'EiB', 'ZiB', 'YiB'];
+	let u = -1;
+	const r = 10**dp;
 
-  do {
-    bytes /= thresh;
-    ++u;
-  } while (Math.round(Math.abs(bytes) * r) / r >= thresh && u < units.length - 1);
+	do {
+		bytes /= thresh;
+		++u;
+	} while (Math.round(Math.abs(bytes) * r) / r >= thresh && u < units.length - 1);
 
 
-  return bytes.toFixed(dp) + ' ' + units[u];
+	return bytes.toFixed(dp) + ' ' + units[u];
 }
 

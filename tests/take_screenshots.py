@@ -178,7 +178,7 @@ def spec(t, cdp):
     open_dialog(t)
     t.js(f"""(function () {{
       var field = document.getElementById('GM_config_field_emuleCat'), before = field.value;
-      var merged = mergeAmuleCategories({json.dumps(AMULE_CATEGORIES)}, before);
+      var merged = mergeCategories({json.dumps(AMULE_CATEGORIES)}, before);
       showApiStatus('import', merged.message, 'ok', function () {{ field.value = before; }});
       field.value = merged.value;
       document.getElementById('GM_config_emuleCat_var').classList.add('changed');
