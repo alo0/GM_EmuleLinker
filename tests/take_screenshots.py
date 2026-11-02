@@ -29,9 +29,10 @@ SPEC = os.path.join(OUT, 'spec')
 README_SETTINGS = {'ed2kDlMethod': 'amuleapi', 'emuleUrl': 'http://127.0.0.1:4711/', 'emulePwd': '',
                    'emuleCat': '*Video=2;Audio=1;Documents=3'}
 
-# SPECIFICATIONS.md: two servers, the first one checked and displayed
+# SPECIFICATIONS.md: two servers, the first one checked and displayed; the eMule collection of the
+# test page left unchecked by the filter of the links checked by default (SF-5.7)
 SPEC_SETTINGS = {'ed2kDlMethod': 'amuleapi', 'emuleUrl': 'http://192.168.1.10:4711/', 'emulePwd': 'secret',
-                 'emuleCat': '*Video=2;Audio=1;Documents=3'}
+                 'emuleCat': '*Video=2;Audio=1;Documents=3', 'checkFilter': r'/^(?!.*\.emulecollection$)/i'}
 SPEC_SERVERS = {'active': 'srv1', 'list': [
     {'id': 'srv1', 'name': 'aMule NAS', 'method': 'amuleapi', 'emuleUrl': 'http://192.168.1.10:4711/',
      'emulePwd': 'secret', 'emuleCat': '*Video=2;Audio=1;Documents=3'},
@@ -113,7 +114,7 @@ def spec(t, cdp):
     # the popup in normal mode, with the answer of aMule (legend: SF-2 in SPECIFICATIONS.md)
     t.load(settings=SPEC_SETTINGS, debug=0)
     t.js("var p = document.getElementById('theDiv'); p.style.marginTop = '34px'; p.style.marginLeft = '34px';")
-    t.js("showStatus('9 link(s) added to aMule', true)")
+    t.js("showStatus('8 link(s) added to aMule', true)")
     t.js(MARKERS)
     t.js('hidePage(true)')
     t.js("""(function () {
@@ -124,6 +125,7 @@ def spec(t, cdp):
       mark(b[2], 5, 'top'); mark(b[3], 6, 'top'); mark('#emlStatus', 7, 'left');
       mark(rows[0].querySelector('input'), 8, 'left'); mark(rows[1].querySelector('a'), 9, 'right');
       mark(cells[cells.length - 1], 10, 'left'); mark(bottom.querySelector('input'), 11, 'left');
+      mark(document.querySelector('#theDiv tr.filtered a'), 12, 'right');
     })()""")
     cdp.pump(0.3)
     save(cdp, os.path.join(SPEC, 'popup.png'), union(box(t, '#theDiv', 34), {'x': 0, 'y': 0, 'width': 1, 'height': 1}))

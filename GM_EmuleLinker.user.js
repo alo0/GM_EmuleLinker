@@ -9,7 +9,7 @@
 // @grant 		GM_log
 // @grant 		GM_xmlhttpRequest
 // @connect     *
-// @version     0.12
+// @version     0.13
 // @updateURL       https://raw.githubusercontent.com/alo0/GM_EmuleLinker/master/GM_EmuleLinker.user.js
 // @downloadURL     https://raw.githubusercontent.com/alo0/GM_EmuleLinker/master/GM_EmuleLinker.user.js
 // ==/UserScript==
@@ -68,6 +68,7 @@ var emuleCat = [ {name: 'default', value: '0', select: '1'} ]; // Which emule ca
 var popupPos = 'fixed'; // absolute or fixed
 var popupHeight = 800; // max height in pixel of the popup box
 var popupWidth = 800; // max width in pixel of the popup box
+var checkFilter = ''; // the links checked in the popup: a regular expression on the file name ('' checks every link)
 
 // edit box parameters
 var editCol = 80; // number of column
@@ -816,6 +817,9 @@ var GM_config = new GM_configStruct();
 var eLinks=new Array();
 var eFiles=new Array();
 var eSizes=new Array();
+var eNames=new Array();		// the decoded file names, without the suffix of a duplicate name (SF-5.7)
+var checkRegExp = null;		// checkFilter read by saveConfig(): null checks every link (SF-5.7)
+var FILTERED_TITLE = 'Not checked by default: its name does not match the filter of the settings';
 
 var sendingBusy = false;	// a sending (aMule, eMule, MLDonkey) waits for its answer, see setSending()
 var statusTimer = null;		// animation of the "Please wait" message, see showStatus()
@@ -855,9 +859,11 @@ var SETTINGS_CSS = "#GM_config { width: clamp(640px, 50vw, 960px) !important; he
 	+ "\n#GM_config input[type=text], #GM_config input[type=password], #GM_config select { font-size: 12px;"
 	+ " padding: 3px 5px; border: 1px solid #99a; border-radius: 3px; }"
 	+ "\n#GM_config input:focus, #GM_config select:focus { outline: 2px solid #00f; outline-offset: 0; }"
-	// the long values (address, categories) take the whole width of the column, as their help
-	+ "\n#GM_config #GM_config_field_emuleUrl, #GM_config #GM_config_field_emuleCat { grid-column: 2 / -1;"
-	+ " width: 100%; box-sizing: border-box; }"
+	// the long values (address, categories, filter) take the whole width of the column, as their help
+	+ "\n#GM_config #GM_config_field_emuleUrl, #GM_config #GM_config_field_emuleCat, #GM_config #GM_config_field_checkFilter {"
+	+ " grid-column: 2 / -1; width: 100%; box-sizing: border-box; }"
+	// a regular expression, and the code in the helps, in a monospace font
+	+ "\n#GM_config #GM_config_field_checkFilter, #GM_config .help code { font-family: Consolas, \"Courier New\", monospace; }"
 	+ "\n#GM_config .pwdbox { grid-column: 2 / -1; display: flex; column-gap: 8px; }"	// password and its Show button
 	+ "\n#GM_config .pwdbox input { flex: 1; min-width: 0; }"
 	+ "\n#GM_config .reveal { justify-self: start; font-size: 11px; padding: 2px 8px; }"
@@ -958,7 +964,7 @@ scriptConfig();
 // if ed2k links, display the popup
 var n = 0;
 try {
-	n = getEd2kLinks(eLinks, eFiles, eSizes);
+	n = getEd2kLinks(eLinks, eFiles, eSizes, eNames);
 }
 catch (e) {
 	// whatever happens during the scan, the keyboard shortcuts installed below
@@ -1025,9 +1031,10 @@ function debugButton() {
 * Get ed2k links in the page
 * @param links array to stock the ed2k links
 * @param files array to stock the ed2k file names
+* @param names array to stock the decoded file names, without the suffix of a duplicate name
 * @return number of ed2k links
 */
-function getEd2kLinks(links, files, sizes) {
+function getEd2kLinks(links, files, sizes, names) {
 	var allLinks, thisLink;
 	var i, href, lnk, tlnk;
 	var idx=0; // index of array
@@ -1082,6 +1089,9 @@ function getEd2kLinks(links, files, sizes) {
 					trace("Error in decoding filename a second time");
 				}
 			}
+
+			// the name tested by the filter of the links checked by default (SF-5.7)
+			names[idx]=tlnk[2];
 
 			// check if the filename doesn't already exist
 			if (files.indexOf(tlnk[2])>=0) {
@@ -1225,6 +1235,8 @@ function createPopup(links, files, sizes) {
 		div#divBody a.ed2k:visited    { color: #000000; text-decoration: none } \
 		div#divBody a.ed2k:hover      { color: #0000FF; text-decoration: underline; font-weight: normal } \
 		div#divBody a.ed2k:active     { color: #0000FF; text-decoration: underline; font-weight: normal } \
+		div#divBody tr.filtered td, div#divBody tr.filtered a.ed2k { color: #999999 } \
+		div#divBody tr.filtered a.ed2k:hover { color: #0000FF } \
 		div#divBody input.bigcheck { \
 			height: 16px; \
 			width: 16px; \
@@ -1283,6 +1295,8 @@ function createPopup(links, files, sizes) {
 			tmp_link.style.overflow='auto';
 			// custom method: a click on a file name sends it with a POST form (SF-3.3)
 			tmp_link.addEventListener('click', clickOneLink, false);
+			// the "check all" boxes follow the boxes of the links
+			tmp_link.addEventListener('change', syncCheckAll, false);
 			break;
 
 		case 2: // edit mode
@@ -1300,6 +1314,11 @@ function createPopup(links, files, sizes) {
 
 	// adding the function toolbar at the bottom
 	addToolbar(container, 1);
+
+	// the "check all" boxes show the links left unchecked by the filter of the settings (SF-5.7)
+	if (GM_getValue("popup_mode", 1) == 1) {
+		syncCheckAll();
+	}
 }
 
 /**
@@ -1336,7 +1355,14 @@ function htmlLinkList(links, files, sizes) {
 	html = '<hr /><table>';
 
 	for (var i=0; i<links.length; i++) {
-		html += '<tr><td><input class="smallcheck" name="l' + i + '" type="checkbox" id="l' + i + '" tabindex="' + i+1 + '" value="1" checked="checked" /></td><td style="white-space:nowrap;"><a class="ed2k" href="' + linkHref(links[i]) + '" target="emule">' + files[i] + '</a></td><td style="min-width:40px;">'+ humanFileSize(sizes[i], false, 0) + '</td></tr>'; //
+		// the links whose name does not match the filter of the settings are left unchecked, and greyed (SF-5.7)
+		if (checkedByDefault(eNames[i])) {
+			html += '<tr><td><input class="smallcheck" name="l' + i + '" type="checkbox" id="l' + i + '" tabindex="' + (i+1) + '" value="1" checked="checked" /></td>';
+		}
+		else {
+			html += '<tr class="filtered" title="' + FILTERED_TITLE + '"><td><input class="smallcheck" name="l' + i + '" type="checkbox" id="l' + i + '" tabindex="' + (i+1) + '" value="1" /></td>';
+		}
+		html += '<td style="white-space:nowrap;"><a class="ed2k" href="' + linkHref(links[i]) + '" target="emule">' + files[i] + '</a></td><td style="min-width:40px;">'+ humanFileSize(sizes[i], false, 0) + '</td></tr>'; //
 	}
 
 	html += '</table><hr />';
@@ -1394,23 +1420,19 @@ function addToolbar(container, pos) {
 	bar.appendChild(divR);
 	container.appendChild(bar);
 
-	// checkbox all
+	// checkbox all, in both toolbars: checks or unchecks every link, mixed when only some of them
+	// are checked (syncCheckAll(), SF-5.1, SF-5.4)
 	var tmp_link=document.createElement('input');
 	tmp_link.type = "checkbox";
 	tmp_link.value = "1";
 	tmp_link.checked = true;
-	tmp_link.className = 'smallcheck';
+	tmp_link.className = 'smallcheck checkall';
 	tmp_link.style.verticalAlign='bottom';
-	if (pos==0) {
-		tmp_link.name = "lall";
-		tmp_link.id = "checkall";
-		// in edit mode the link list is a textarea: there is no checkbox to toggle
-		tmp_link.disabled = (GM_getValue("popup_mode", 1) == 2);
-		tmp_link.addEventListener('click', function(){ checkButton(); }, false );
-	}
-	else {
-		tmp_link.disabled = true;
-	}
+	tmp_link.name = (pos==0) ? "lall" : "lall2";
+	tmp_link.id = (pos==0) ? "checkall" : "checkall2";
+	// in edit mode the link list is a textarea: there is no checkbox to toggle
+	tmp_link.disabled = (GM_getValue("popup_mode", 1) == 2);
+	tmp_link.addEventListener('click', function(e){ checkButton(e.target); }, false );
 
 	divL.appendChild (tmp_link);
 
@@ -1591,24 +1613,35 @@ function openButton() {
 }
 
 /**
-* Actions when "Check" button is pressed
+* Actions when the "check all" box of a toolbar is clicked: every link takes its state. A mixed
+* box becomes checked when clicked: every link is then checked.
+* @param checkbox the box clicked, in the top or the bottom toolbar
 */
-function checkButton() {
+function checkButton(checkbox) {
 	trace("checkButton()");
-	var i=0;
-	var checkbox=document.getElementById("checkall");
 	var line;
-	if (checkbox.checked==true) {
-		for (i=0; i<eLinks.length; i++) {
-			line = document.getElementById('l'+i);
-			if (line != null) { line.checked=true; }
-		}
+	for (var i=0; i<eLinks.length; i++) {
+		line = document.getElementById('l'+i);
+		if (line != null) { line.checked=checkbox.checked; }
 	}
-	else {
-		for (i=0; i<eLinks.length; i++) {
-			line = document.getElementById('l'+i);
-			if (line != null) { line.checked=false; }
-		}
+	syncCheckAll();
+}
+
+/**
+* Show the state of the links on the "check all" boxes of both toolbars: checked when every link
+* is checked, unchecked when none is, mixed otherwise (SF-5.1, SF-5.7)
+*/
+function syncCheckAll() {
+	var count=0;
+	var line;
+	for (var i=0; i<eLinks.length; i++) {
+		line = document.getElementById('l'+i);
+		if (line != null && line.checked) { count++; }
+	}
+	var boxes=document.querySelectorAll('#theDiv input.checkall');
+	for (var b=0; b<boxes.length; b++) {
+		boxes[b].checked = (count == eLinks.length);
+		boxes[b].indeterminate = (count > 0 && count < eLinks.length);
 	}
 }
 
@@ -2278,8 +2311,9 @@ function showStatus(msg, ok) {
 // -------------------------------------------------------------------------
 /**
 * Get selected links
-* When the popup is not displayed there is no checkbox to read: every link of
-* the page is then considered as selected.
+* When the popup is not displayed there is no checkbox to read: the links that the
+* popup would check are then selected, every link when the filter of the settings is
+* empty (SF-5.5, SF-5.7).
 * @param links the ed2k links found in the page
 * @return the selected links
 */
@@ -2290,12 +2324,54 @@ function getSelectLink(links) {
 
 	for (var i=0; i<links.length; i++) {
 		checkbox = document.getElementById('l'+i);
-		if (checkbox == null || checkbox.checked == true) {
+		if (checkbox == null ? checkedByDefault(eNames[i]) : checkbox.checked == true) {
 			lnk[idx]=links[i];
 			idx++;
 		}
 	}
 	return lnk;
+}
+
+/**
+* Read the filter of the links checked by default (SF-5.7): a regular expression, written alone
+* (case-sensitive) or as /expression/flags, as in JavaScript (/expression/i ignores the case).
+* The flags g and y are refused: they make each test start where the previous one stopped.
+* @param str the filter, as written in the settings
+* @return {re: the regular expression, or null for an empty filter} or {error: the reason}
+*/
+function parseCheckFilter(str) {
+	var text = String(str == null ? '' : str).trim();
+	var source = text;
+	var flags = '';
+	var m = /^\/(.*)\/([a-z]*)$/.exec(text);
+
+	if (text == '') {
+		return {re: null};
+	}
+	if (m) {
+		source = m[1];
+		flags = m[2];
+	}
+	if (/[gy]/.test(flags)) {
+		return {error: 'The flags g and y are not allowed: each test would depend on the previous one'};
+	}
+	try {
+		return {re: new RegExp(source, flags)};
+	}
+	catch (e) {
+		// the reason given by the browser, without the expression that it repeats (Chrome)
+		var reason = String(e.message).split(': ').pop();
+		return {error: 'Not a valid regular expression: ' + reason.charAt(0).toUpperCase() + reason.slice(1)};
+	}
+}
+
+/**
+* Tell whether a link is checked by default in the popup (SF-5.7)
+* @param name the decoded file name, without the suffix of a duplicate name
+* @return true when the name matches the filter of the settings, or when it is empty
+*/
+function checkedByDefault(name) {
+	return checkRegExp == null || checkRegExp.test(name);
 }
 
 /**
@@ -2446,14 +2522,15 @@ function scriptConfig() {
 	GM_config.init(configDiv, settingsTitle(), SETTINGS_CSS, {
 		'section1' : { section: ['Servers', 'Where the ed2k links are sent: the servers you use, and the one that receives the links'], label: '', type: 'hidden'},
 		'ed2kDlMethod': { label: 'Ed2k Download Method', title: 'How the links are sent:\nLocal: to the application of your system that handles ed2k links (default)\neMule (web): to eMule, on this computer or another one, through its web interface\naMule 3.x (amuleapi): to aMule 3.1 or later, through its REST API\naMule 2.x (amuleweb): to aMule 2.x, through its web interface\nMLDonkey (web): to MLDonkey, through its web interface\nCustom: posted to your own server', type:'select', options:{'local':'Local (your system default)','emule':'eMule (web)','amuleapi':'aMule 3.x (amuleapi)','amule':'aMule 2.x (amuleweb)','mldonkey':'MLDonkey (web)','custom':'Custom (post to your own server)'}, default: ed2kDlMethod}, // default value doesn't work with a dropdown menu => see bugfix in the lib
-		'emuleUrl': { label: 'Server URL', title : 'The address of the web interface of eMule, aMule or MLDonkey, or of your own server.\nFor instance http://127.0.0.1:4711/ (a final / is added when missing).', type: 'text', size: 32, default: emuleUrl },
-		'emuleUser': { label: 'User', title : 'The user of the web interface of MLDonkey (admin by default).', type: 'text', size: 20, default: emuleUser },
+		'emuleUrl': { label: 'Server URL', title : 'The address of the web interface of eMule, aMule or MLDonkey, or of your own server.\nFor instance `http://127.0.0.1:4711/` (a final `/` is added when missing).', type: 'text', size: 32, default: emuleUrl },
+		'emuleUser': { label: 'User', title : 'The user of the web interface of MLDonkey (`admin` by default).', type: 'text', size: 20, default: emuleUser },
 		'emulePwd': { label: 'Password', title : 'The password of the web interface. Optional: leave it empty if it has none.\nFor aMule 3.x, its admin password. Test (eMule, aMule, MLDonkey) checks the Server URL and the password, without saving them.', type: 'text', size: 20, default: emulePwd },
-		'emuleCat': { label: 'Category', title : 'The categories offered in the popup, as name=value, separated by ;\nA * before a name makes it the default one.\neMule and aMule 3.x: the value is the number of the category (0: the default category), e.g. *default=0;Video=2\neMule and aMule: Import fills the field with their categories, in their order.\naMule 2.x: the value is the name of the category, e.g. *Audio=audio;Video=Video (a ; in a name is written \\;)', type: 'text', size: 40, default: catToStr(emuleCat) },
-		'section2' : { section: ['Popup', 'How the popup is displayed'], label: '', type: 'hidden'},
+		'emuleCat': { label: 'Category', title : 'The categories offered in the popup, as `name=value`, separated by `;`\nA `*` before a name makes it the default one.\neMule and aMule 3.x: the value is the number of the category (`0`: the default category), e.g. `*default=0;Video=2`\neMule and aMule: Import fills the field with their categories, in their order.\naMule 2.x: the value is the name of the category, e.g. `*Audio=audio;Video=Video` (a `;` in a name is written `\\;`)', type: 'text', size: 40, default: catToStr(emuleCat) },
+		'section2' : { section: ['Popup', 'How the popup is displayed, and the links it checks'], label: '', type: 'hidden'},
 		'popupPos': { label: 'Popup Position', title : 'fixed: the popup stays in view when the page scrolls.\nabsolute: the popup stays at the top of the page.', type: 'radio', options:['absolute','fixed'], default: popupPos },
 		'popupHeight': { label: 'Max Popup Height in px (0=unlimited)', title : 'The maximum height of the popup, in pixels: at least 40, or 0 for unlimited.', type: 'int', size: 6, default: popupHeight },
 		'popupWidth': { label: 'Max Popup Width in px (0=unlimited)', title : 'The maximum width of the popup, in pixels: at least 100, or 0 for unlimited.', type: 'int', size: 6, default: popupWidth },
+		'checkFilter': { label: 'Links checked by default', title : 'A regular expression on the file name: the links whose name matches it are checked in the popup, the others are listed, unchecked. Empty: every link is checked.\nThe filter is case-sensitive. To make it case-insensitive: `/expression/i`.\nExamples:\n(Blacklist) Every file but the eMule collections: `/^(?!.*\\.emulecollection$)/i`\n(Whitelist) Only the cbz, cbr, rar and zip files: `/\\.(cbz|cbr|rar|zip)$/i`', type: 'text', size: 40, default: checkFilter },
 		'section3' : { section: ['Edit box', 'The size of the text box of the edit mode'], label: '', type: 'hidden'},
 		'editCol': { label: 'Number of columns', title : 'The width of the edit box, in characters.', type: 'int', size: 4, default: editCol },
 		'editRow': { label: 'Number of rows', title : 'The height of the edit box, in lines.', type: 'int', size: 4, default: editRow },
@@ -2492,6 +2569,27 @@ function settingsTitle() {
 }
 
 /**
+* Write the help of a field: the text between backquotes is code (an address, a value, a regular
+* expression), shown in a monospace font. The tooltip of a row, its textContent, has no backquote.
+* @param help the element of the help
+* @param text the help, its code between backquotes
+*/
+function setHelpText(help, text) {
+	var parts = String(text).split('`');
+	help.textContent = '';
+	for (var i=0; i<parts.length; i++) {
+		if (i % 2 == 1) {
+			var code = document.createElement('code');
+			code.textContent = parts[i];
+			help.appendChild(code);
+		}
+		else {
+			help.appendChild(document.createTextNode(parts[i]));
+		}
+	}
+}
+
+/**
 * Called by GM_config once the settings dialog is built: helps under the fields, masked password,
 * the servers as a list each with its own method and settings, values checked before saving,
 * Escape and a backdrop to close it
@@ -2515,7 +2613,7 @@ function settingsDialogOpened() {
 			// the help is shown under the field instead
 			var help = document.createElement('div');
 			help.className = 'help';
-			help.textContent = text;
+			setHelpText(help, text);
 			row.appendChild(help);
 		}
 	}
@@ -2783,7 +2881,7 @@ function settingRow(id, text, tag, helpText) {
 		}
 	}
 	help.className = 'help';
-	help.textContent = helpText;
+	setHelpText(help, helpText);
 	row.appendChild(label);
 	row.appendChild(field);
 	row.appendChild(help);
@@ -3735,7 +3833,7 @@ function addHelpButton() {
 function addResetButton() {
 	var bar = document.getElementById('GM_config_buttons_holder');
 	var button = document.createElement('button');
-	var others = ['popupPos', 'popupHeight', 'popupWidth', 'editCol', 'editRow'];
+	var others = ['popupPos', 'popupHeight', 'popupWidth', 'checkFilter', 'editCol', 'editRow'];
 	var editor = ['serverName', 'serverMethod'].concat(METHOD_SETTINGS);
 
 	button.type = 'button';
@@ -3875,6 +3973,9 @@ function checkSettings() {
 	else if (parseInt(value('popupWidth'), 10) > 0 && parseInt(value('popupWidth'), 10) < 100) {
 		errors.push(['popupWidth', 'At least 100 px, or 0 for unlimited: a smaller popup would hide its Settings button']);
 	}
+	if (parseCheckFilter(value('checkFilter')).error) {
+		errors.push(['checkFilter', parseCheckFilter(value('checkFilter')).error]);
+	}
 	if (!whole.test(value('editCol')) || parseInt(value('editCol'), 10) < 1) {
 		errors.push(['editCol', 'A whole number, at least 1, is expected']);
 	}
@@ -3938,6 +4039,15 @@ function saveConfig() {
 		popupWidth = 0;
 		corrected.popupWidth = 0;
 	}
+
+	// a filter that can not be read is refused by Save (checkSettings()): one stored anyway is
+	// ignored, and every link is checked (SF-5.7)
+	checkFilter = GM_config.get('checkFilter');
+	var filter = parseCheckFilter(checkFilter);
+	if (filter.error) {
+		trace("saveConfig() filter of the links checked by default ignored: " + filter.error);
+	}
+	checkRegExp = filter.error ? null : filter.re;
 
 	editCol = GM_config.get('editCol');
 	editRow = GM_config.get('editRow');

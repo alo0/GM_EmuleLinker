@@ -72,6 +72,8 @@ The changes of each version are listed in [CHANGELOG.md](CHANGELOG.md).
 The popup lists the files of the page, with their size, each with a checkbox.
 
 - **Add all links** sends the checked links. Clicking a file name sends this link only.
+- The box of the top or the bottom toolbar checks or unchecks every link.
+- Every link is checked by default. To leave some of them unchecked, write a regular expression on the file name in **Links checked by default**, in the Popup section of the settings: the links whose name matches it are checked, the others are listed in gray, unchecked. For instance `/^(?!.*\.emulecollection$)/i` checks every file but the eMule collections, and `/\.(cbz|cbr|rar|zip)$/i` only the `.cbz`, `.cbr`, `.rar` and `.zip` files (`/i` ignores the case). With the popup closed, these links only are sent.
 - The drop-down list chooses the category of the downloads (eMule and aMule). The choice applies to the current page only: each new page starts on the default category of the settings.
 - **Edit mode** replaces the list by a text box holding the links, which you can edit: its content is what is sent. **Normal mode** goes back to the list.
 - A popup closed on a page stays closed on the next pages, until you open it again. The links can still be sent while it is closed.

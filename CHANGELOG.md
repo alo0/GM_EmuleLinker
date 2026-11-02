@@ -9,6 +9,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Up to 0.7, the script was published on userscripts.org (script 154608). It moved to GitHub in 2014.
 
+## [0.13] - 2026-11-04
+
+### Added
+
+- Settings dialog, Popup section: the new field **Links checked by default**, a regular expression on the file name. The links whose name matches it are checked in the popup, the others are listed in gray, unchecked, and are not sent with the popup closed. It gives a block list, `/^(?!.*\.emulecollection$)/i` (every file but the eMule collections), or an allow list, `/\.(cbz|cbr|rar|zip)$/i` (only these files); `/i` ignores the case. An expression that cannot be read is refused by Save.
+- Popup: the box of the bottom toolbar checks or unchecks every link, as the top one; both are shown mixed when only some links are checked, and follow the boxes of the links.
+- Settings dialog: the code in the helps (addresses, values, regular expressions) is in a fixed-width font.
+- Documentation (`SPECIFICATIONS.md`, section 7.4): the entry of the version in `CHANGELOG.md` is reordered before the push, and a summary of the release is proposed after it.
+
+### Changed
+
+- Documentation (`SPECIFICATIONS.md`, chapter 6): the identified improvements are renumbered, each with its target version, and detailed (views of the popup, message when it is closed, general section of the settings, online help, server chosen from the popup...).
+- Test page `test_sample.html`: the links 1 and 9 are now a `.cbz` file and an eMule collection, to try the filter of the links checked by default.
+- Tests: every HTTP request of the test tools has a time limit, the requests to the DevTools of Chrome included: a browser that no longer answers stops the run with an error.
+
+### Fixed
+
+- Popup: the tab order of the boxes of the links is 1, 2, 3... instead of 1, 11, 21... (the index and 1 were joined as text); the order of the boxes was already right.
+
 ## [0.12] - 2026-10-14
 
 ### Added
@@ -209,6 +228,7 @@ Up to 0.7, the script was published on userscripts.org (script 154608). It moved
 
 - First version.
 
+[0.13]: https://github.com/alo0/GM_EmuleLinker/compare/v0.12...v0.13
 [0.12]: https://github.com/alo0/GM_EmuleLinker/compare/v0.11...v0.12
 [0.11]: https://github.com/alo0/GM_EmuleLinker/compare/v0.10...v0.11
 [0.10]: https://github.com/alo0/GM_EmuleLinker/compare/v0.9...v0.10

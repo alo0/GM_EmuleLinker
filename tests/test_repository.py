@@ -217,6 +217,17 @@ def test_indentation(t):
         t.check(text.endswith('\n'), f'{name}: a final newline')
 
 
+def test_network_timeouts(t):
+    """§ 7.2: every HTTP request of the test tools has a time limit, so that a browser or a client
+    that no longer answers stops the run with an error, instead of a run that never ends."""
+    for name in sorted(os.listdir(os.path.join(ROOT, 'tests'))):
+        if not name.endswith('.py'):
+            continue
+        for number, line in enumerate(read(os.path.join('tests', name)).splitlines(), 1):
+            if re.search(r'\burlopen\(|\bopener\.open\(', line):
+                t.check('timeout=' in line, f'tests/{name}:{number}: a timeout', line.strip())
+
+
 def test_former_address(t):
     """§ 3.2: the former address leads the installations made before 0.10 to the new one."""
     t.check(os.path.exists(os.path.join(ROOT, FORMER)), f'{FORMER} kept')

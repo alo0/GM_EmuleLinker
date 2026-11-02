@@ -13,10 +13,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EMULE = {'ed2kDlMethod': 'emule', 'emuleUrl': 'http://127.0.0.1:4711/',
          'emulePwd': 'secret', 'emuleCat': '*default=0;'}
 
-NAMES = {'example1.mp3', 'example2.avi', 'Documentary Planet Earth 4K.mp4',
+NAMES = {'example1.cbz', 'example2.avi', 'Documentary Planet Earth 4K.mp4',
          'Été à Paris (Café).mp3', 'Conférence Téléphonique (v2.0).mkv',
          'François & Marie [Résumé].docx', 'Ópera Española (Colección).flac',
-         'Bücher über Geräte (édition).pdf', 'Guide Réseau été 2024.pdf'}
+         'Bücher über Geräte (édition).pdf', 'Guide Réseau été 2024.emulecollection'}
 
 ROWS = "document.querySelectorAll('#divBody a.ed2k').length"
 SELECTED_CAT = ("(function(){var s=document.getElementById('cat');"
@@ -36,7 +36,7 @@ def test_detection(t):
     t.eq(t.js("[].filter.call(document.querySelectorAll('a[href^=\"ed2k\"]'), function (a) {"
               "return !a.closest('#theDiv'); })[0].getAttribute('href')"), 'ed2k://xxxxxxxx',
          'the first ed2k link of the page is the malformed one')
-    t.eq(t.js('eFiles[0]'), 'example1.mp3', 'the first file of the popup: the valid link that follows it')
+    t.eq(t.js('eFiles[0]'), 'example1.cbz', 'the first file of the popup: the valid link that follows it')
     t.eq(t.dialogs, [], 'no alert')
     t.eq(t.js('eLinks.length'), 9, 'links detected')
     t.eq(set(t.js('eFiles')), NAMES, 'file names, decoded')
@@ -125,8 +125,8 @@ def test_settings_dialog_look(t):
     t.eq(t.js("document.getElementById('GM_config_header').firstChild.textContent"),
          f'Emule Linker {script_version()} — Settings', 'title with the version')
     tooltips = "document.querySelectorAll('#GM_config .config_var[title]').length"
-    t.eq(t.js("document.querySelectorAll('#GM_config .config_var .help').length"), 12, 'a help for each field (User included, 0.12)')
-    t.eq(t.js(tooltips), 12, 'helps hidden: each one is the tooltip of its row')
+    t.eq(t.js("document.querySelectorAll('#GM_config .config_var .help').length"), 13, 'a help for each field (User included, 0.12; Links checked by default, 0.13)')
+    t.eq(t.js(tooltips), 13, 'helps hidden: each one is the tooltip of its row')
     shown = ("[].filter.call(document.querySelectorAll('#GM_config .help'), function (h) {"
              "return getComputedStyle(h).display != 'none'; }).length")
     help_btn = "document.getElementById('GM_config_helpBtn').textContent"
@@ -134,7 +134,7 @@ def test_settings_dialog_look(t):
     t.js(f"{field('emuleCat')}.focus()")
     t.eq(t.js(shown), 0, 'nothing shown on focus: the fields do not move')
     t.click('#GM_config_helpBtn')
-    t.eq([t.js(shown), t.js(help_btn)], [12, 'Hide help'], 'Help button: every help shown')
+    t.eq([t.js(shown), t.js(help_btn)], [13, 'Hide help'], 'Help button: every help shown')
     t.eq(t.js(tooltips), 0, 'helps shown: no tooltip repeating them')
     # the field, or the field and its Import button (Category, with eMule and aMule 3.x)
     edges = ("(function(n){var f=(document.querySelector('#GM_config_'+n+'_var .catbox')||"
@@ -150,9 +150,9 @@ def test_settings_dialog_look(t):
          [True, True], 'Password and its buttons (Show, Test) as wide as their help')
     t.close_settings()
     t.check(t.open_settings(), 'settings dialog opened again')
-    t.eq(t.js(shown), 12, 'the choice is kept at the next opening')
+    t.eq(t.js(shown), 13, 'the choice is kept at the next opening')
     t.click('#GM_config_helpBtn')
-    t.eq([t.js(shown), t.js(help_btn), t.gm('settings_help'), t.js(tooltips)], [0, '? Show help', 0, 12],
+    t.eq([t.js(shown), t.js(help_btn), t.gm('settings_help'), t.js(tooltips)], [0, '? Show help', 0, 13],
          'Help button again: hidden, stored, tooltips back')
     t.eq([t.js(f"{field(n)}.size") for n in ('emuleUrl', 'emuleCat', 'popupHeight', 'editRow')],
          [32, 40, 6, 4], 'fields sized to their content')
@@ -454,7 +454,7 @@ def test_settings_reset_and_undo(t):
     checked and every server removed. It highlights what it changed, and can be undone; Save then
     stores it."""
     custom = {'ed2kDlMethod': 'amuleapi', 'emuleUrl': 'http://192.168.1.10:4711/', 'emulePwd': 'secret',
-              'emuleCat': '*Video=2;Audio=1', 'popupHeight': 600}
+              'emuleCat': '*Video=2;Audio=1', 'popupHeight': 600, 'checkFilter': r'/\.cbz$/i'}
     marked = "[].map.call(document.querySelectorAll('#GM_config .config_var.changed'), function (r) { return r.id; })"
     notice = "(document.getElementById('GM_config_notice') || {}).textContent"
     t.load(settings=custom)
@@ -462,18 +462,20 @@ def test_settings_reset_and_undo(t):
     t.check(t.js("!!document.getElementById('GM_config_resetBtn')"), 'Reset button')
     t.js("document.getElementById('GM_config_resetBtn').click()")
     t.eq([[r[2], r[1]] for r in t.js(SERVER_ROWS)], [['Local', True]], 'Local checked, no server')
-    t.eq([t.js(EDITED), t.js(f"{field('popupHeight')}.value")], [None, '800'], 'no field displayed, default sizes')
-    t.eq(sorted(t.js(marked)), ['GM_config_ed2kDlMethod_var', 'GM_config_popupHeight_var'], 'servers and height highlighted')
-    t.check((t.js(notice) or '').startswith('2 settings set back to their default value'), 'notice', t.js(notice))
+    t.eq([t.js(EDITED), t.js(f"{field('popupHeight')}.value"), t.js(f"{field('checkFilter')}.value")], [None, '800', ''],
+         'no field displayed, default sizes, no filter')
+    t.eq(sorted(t.js(marked)), ['GM_config_checkFilter_var', 'GM_config_ed2kDlMethod_var', 'GM_config_popupHeight_var'],
+         'servers, height and filter highlighted')
+    t.check((t.js(notice) or '').startswith('3 settings set back to their default value'), 'notice', t.js(notice))
     t.eq(t.stored_settings(), custom, 'nothing saved')
     t.js("document.getElementById('GM_config_undoBtn').click()")
     t.eq([[r[2], r[1]] for r in t.js(SERVER_ROWS)], [['Local', False], ['aMule 3.x (amuleapi)', True]], 'Undo: the server back')
-    t.eq([t.js(f"{field(n)}.value") for n in ('emuleUrl', 'emulePwd', 'emuleCat', 'popupHeight')],
-         ['http://192.168.1.10:4711/', 'secret', '*Video=2;Audio=1', '600'], 'Undo: its settings back')
+    t.eq([t.js(f"{field(n)}.value") for n in ('emuleUrl', 'emulePwd', 'emuleCat', 'popupHeight', 'checkFilter')],
+         ['http://192.168.1.10:4711/', 'secret', '*Video=2;Audio=1', '600', r'/\.cbz$/i'], 'Undo: its settings back')
     t.eq([t.js(marked), t.js(notice)], [[], None], 'Undo: no highlight, no notice')
     t.js("document.getElementById('GM_config_resetBtn').click()")
     t.save_settings()
-    t.eq([t.stored_settings().get(k) for k in ('ed2kDlMethod', 'emulePwd', 'popupHeight')], ['local', '', 800],
+    t.eq([t.stored_settings().get(k) for k in ('ed2kDlMethod', 'emulePwd', 'popupHeight', 'checkFilter')], ['local', '', 800, ''],
          'Reset then Save: default values stored')
     t.eq(stored_servers(t)['list'], [], 'no server')
 
@@ -779,3 +781,171 @@ def test_download_methods_in_settings(t):
     t.eq(t.js("document.getElementById('GM_config_field_ed2kDlMethod').value"), 'amule',
          'the method chosen before is still selected')
     t.eq([[r[1], r[3]] for r in t.js(SERVER_ROWS)][1], [True, 'aMule 2.x (amuleweb)'], 'its server checked, with its method')
+
+
+# ---- links checked by default (SF-5.7) -------------------------------------------------
+BLACKLIST = r'/^(?!.*\.emulecollection$)/i'      # the examples of the help of the field
+WHITELIST = r'/\.(cbz|cbr|rar|zip)$/i'
+COLLECTION = 'Guide Réseau été 2024.emulecollection'
+FILTERED_TITLE = 'Not checked by default: its name does not match the filter of the settings'
+
+# the rows of the popup: [file name, checked, greyed, tooltip]
+FILTER_ROWS = ("[].map.call(document.querySelectorAll('#divBody tr'), function (r) {"
+               "return [r.querySelector('a.ed2k').textContent, r.querySelector('input').checked,"
+               " r.classList.contains('filtered'), r.title]; })")
+# the "check all" boxes of the top and the bottom toolbars: [checked, mixed, disabled]
+ALL_BOXES = ("[].map.call(document.querySelectorAll('#theDiv input.checkall'), function (b) {"
+             "return [b.checked, b.indeterminate, b.disabled]; })")
+CHECKED = "[].map.call(document.querySelectorAll('#divBody tr input'), function (b) { return b.checked; })"
+
+
+def test_tab_order(t):
+    """SF-3.6: the boxes of the links have the tab order of the list, 1 for the first one, the
+    filtered ones included (once 1, 11, 21...: the index and 1 joined as text)."""
+    t.load(settings=with_emule(checkFilter=BLACKLIST))
+    t.eq(t.js("[].map.call(document.querySelectorAll('#divBody tr input'), function (b) { return b.getAttribute('tabindex'); })"),
+         [str(i) for i in range(1, 10)], 'tab order 1 to 9')
+
+
+def test_filter_blacklist(t):
+    """SF-5.7: the blacklist example of the help: every link is checked but the eMule collection,
+    still listed, unchecked, its name and its size greyed, with a tooltip; the "check all" boxes of
+    both toolbars are mixed. The name is tested decoded (twice here)."""
+    t.load(settings=with_emule(checkFilter=BLACKLIST))
+    rows = t.js(FILTER_ROWS)
+    t.eq(len(rows), 9, 'every link still listed')
+    t.eq([r[0] for r in rows if not r[1]], [COLLECTION], 'only the collection unchecked')
+    t.eq([r[0] for r in rows if r[2]], [COLLECTION], 'only its row greyed')
+    t.eq(sorted({r[3] for r in rows}), ['', FILTERED_TITLE], 'the tooltip of its row only')
+    t.eq(t.js("(function(){var r=document.querySelector('#divBody tr.filtered');"
+              "return [getComputedStyle(r.querySelector('a.ed2k')).color, getComputedStyle(r.lastElementChild).color];})()"),
+         ['rgb(153, 153, 153)', 'rgb(153, 153, 153)'], 'its name and its size greyed')
+    t.eq(t.js("getComputedStyle(document.querySelector('#divBody tr:not(.filtered) a.ed2k')).color"),
+         'rgb(0, 0, 0)', 'the other names in black')
+    t.eq(t.js(ALL_BOXES), [[False, True, False], [False, True, False]], 'both boxes mixed, and enabled')
+
+
+def test_filter_case_sensitive(t):
+    """SF-5.7: written alone or without /i, the filter is case-sensitive: \\.CBZ$ matches no file of
+    the page (example1.cbz in small letters); with /i, it checks example1.cbz."""
+    for value in (r'\.CBZ$', r'/\.CBZ$/'):
+        t.load(settings=with_emule(checkFilter=value))
+        t.eq(t.js(CHECKED), [False] * 9, f'{value}: no link checked')
+    t.load(settings=with_emule(checkFilter=r'/\.CBZ$/i'))
+    t.eq([r[0] for r in t.js(FILTER_ROWS) if r[1]], ['example1.cbz'], '/\\.CBZ$/i: example1.cbz checked')
+
+
+def test_filter_whitelist(t):
+    """SF-5.7: the whitelist example of the help: only the cbz, cbr, rar and zip files are checked."""
+    t.load(settings=with_emule(checkFilter=WHITELIST))
+    rows = t.js(FILTER_ROWS)
+    t.eq([r[0] for r in rows if r[1]], ['example1.cbz'], 'only the cbz file checked')
+    t.eq(len([r for r in rows if r[2]]), 8, 'the 8 others greyed')
+    t.eq(t.js(ALL_BOXES), [[False, True, False], [False, True, False]], 'both boxes mixed')
+    t.load(settings=with_emule(checkFilter='/^nothing$/'))
+    t.eq(t.js(CHECKED), [False] * 9, 'a filter that no name matches: every link unchecked')
+    t.eq(t.js(ALL_BOXES), [[False, False, False], [False, False, False]], 'both boxes unchecked, not mixed')
+    t.load(settings=EMULE)
+    t.eq([t.js(CHECKED), t.js("document.querySelectorAll('#divBody tr.filtered').length")], [[True] * 9, 0],
+         'no filter (default): every link checked, none greyed')
+    t.eq(t.js(ALL_BOXES), [[True, False, False], [True, False, False]], 'both boxes checked')
+
+
+def test_filter_duplicate_names(t):
+    """SF-5.7 and SF-1.9: the filter tests the file name without the suffix added to a second file
+    of the same name."""
+    h = 'ABCDEF1234567890ABCDEF123456789'
+    t.serve('/__duplicates', '<!doctype html><meta charset="utf-8"><title>duplicates</title>'
+            + ''.join(f'<a href="ed2k://|file|{n}|1048576|{h}{i}|/">{n}</a> '
+                      for i, n in enumerate(('a.emulecollection', 'a.emulecollection', 'b.cbz'))))
+    t.load('__duplicates', settings=with_emule(checkFilter=r'/\.emulecollection$/'))
+    t.eq([r[:2] for r in t.js(FILTER_ROWS)], [['a.emulecollection', True], ['a.emulecollection (1)', True], ['b.cbz', False]],
+         'both collections checked, the suffix of the second one ignored')
+
+
+def test_filter_stored_invalid(t):
+    """SF-5.7: a filter that can not be read, stored anyway, is ignored with a trace: every link is
+    checked, without an alert."""
+    t.load(settings=with_emule(checkFilter=r'/\.(cbz|cbr$/i'))
+    t.eq(t.dialogs, [], 'no alert')
+    t.eq(t.js(CHECKED), [True] * 9, 'every link checked')
+    t.check(t.traced('filter of the links checked by default ignored'), 'trace of saveConfig()')
+
+
+def test_check_all_boxes(t):
+    """SF-5.1 and SF-5.4: the "check all" boxes of both toolbars check or uncheck every link, a
+    mixed one checks them all; they follow the boxes of the links. Disabled in edit mode, where the
+    filter does not apply: the edit box lists every link."""
+    t.load(settings=with_emule(checkFilter=BLACKLIST))
+    t.click('#checkall')
+    t.eq([t.js(CHECKED), t.js(ALL_BOXES)], [[True] * 9, [[True, False, False]] * 2],
+         'the mixed top box clicked: every link checked, both boxes checked')
+    t.click('#checkall2')
+    t.eq([t.js(CHECKED), t.js(ALL_BOXES)], [[False] * 9, [[False, False, False]] * 2],
+         'the bottom box clicked: every link unchecked, both boxes unchecked')
+    t.click('#l0')
+    t.eq(t.js(ALL_BOXES), [[False, True, False]] * 2, 'a link checked by hand: both boxes mixed')
+    for i in range(1, 9):
+        t.click(f'#l{i}')
+    t.eq(t.js(ALL_BOXES), [[True, False, False]] * 2, 'every link checked by hand: both boxes checked')
+    t.keys('m')
+    lines = t.js("document.getElementById('editbox').value.split('\\n')")
+    t.eq([len(lines), any(COLLECTION in line for line in lines)], [9, True], 'edit mode: every link, the collection included')
+    t.eq([b[2] for b in t.js(ALL_BOXES)], [True, True], 'both boxes disabled')
+    t.keys('m')
+    t.eq([r[0] for r in t.js(FILTER_ROWS) if not r[1]], [COLLECTION], 'normal mode again: the filter applied again')
+
+
+def test_settings_check_filter(t):
+    """SF-8 and SF-8.10: the field Links checked by default, last of the Popup section, as wide as
+    its help, in a monospace font; a filter that can not be read, or with the flag g or y, is
+    refused under the field and nothing is saved; a right one is saved, and applied."""
+    error = "(document.querySelector('#GM_config_checkFilter_var .error') || {}).textContent"
+    t.load(settings=EMULE)
+    t.check(t.open_settings(), 'settings dialog opened')
+    t.eq(t.js("document.getElementById('GM_config_popupWidth_var').nextElementSibling.id"), 'GM_config_checkFilter_var',
+         'after the Max Popup Width')
+    t.eq(t.js("document.getElementById('GM_config_checkFilter_field_label').textContent"), 'Links checked by default', 'label')
+    t.eq(t.js("document.getElementById('GM_config_section_desc_1').textContent"),
+         'How the popup is displayed, and the links it checks', 'description of the section')
+    t.eq(t.js(f"{field('checkFilter')}.value"), '', 'empty by default')
+    t.click('#GM_config_helpBtn')       # the help shown, to compare the widths
+    t.eq(t.js("(function(){var f=document.getElementById('GM_config_field_checkFilter').getBoundingClientRect(),"
+              "h=document.querySelector('#GM_config_checkFilter_var .help').getBoundingClientRect();"
+              "return [Math.abs(f.left-h.left)<0.5, Math.abs(f.right-h.right)<0.5];})()"), [True, True], 'as wide as its help')
+    t.check('Consolas' in t.js(f"getComputedStyle({field('checkFilter')}).fontFamily"), 'monospace font')
+    for value, expected in ((r'/\.(cbz|cbr$/i', 'Not a valid regular expression: '),
+                            (r'/\.cbz$/gi', 'The flags g and y are not allowed: each test would depend on the previous one'),
+                            (r'/\.cbz$/y', 'The flags g and y are not allowed: each test would depend on the previous one')):
+        t.set_field('checkFilter', value)
+        t.js("document.getElementById('GM_config_saveBtn').click()")
+        t.pump(0.5)
+        t.check((t.js(error) or '').startswith(expected), f'{value}: refused under the field', t.js(error))
+        t.eq([t.settings_open(), t.js("document.activeElement.id"), t.stored_settings().get('checkFilter')],
+             [True, 'GM_config_field_checkFilter', None], f'{value}: focus on the field, nothing saved')
+    t.eq(t.dialogs, [], 'no alert')
+    t.set_field('checkFilter', WHITELIST)
+    t.save_settings()
+    t.eq(t.stored_settings().get('checkFilter'), WHITELIST, 'saved')
+    t.eq([r[0] for r in t.js(FILTER_ROWS) if r[1]], ['example1.cbz'], 'applied after the reload')
+
+
+def test_settings_help_code(t):
+    """SF-8.3: in the helps, the code (addresses, values, regular expressions) is in a monospace
+    font; the tooltips show the same text, without the backquotes that mark it."""
+    t.load(settings=EMULE)
+    t.check(t.open_settings(), 'settings dialog opened')
+    code = ("(function(n){return [].map.call(document.querySelectorAll('#GM_config_'+n+'_var .help code'),"
+            "function (c) { return c.textContent; });})")
+    t.eq(t.js(f"{code}('checkFilter')"), ['/expression/i', BLACKLIST, WHITELIST], 'Links checked by default: the expressions')
+    t.eq(t.js(f"{code}('emuleUrl')"), ['http://127.0.0.1:4711/', '/'], 'Server URL: the address')
+    t.eq(t.js(f"{code}('emuleUser')"), ['admin'], 'User: its default value')
+    t.eq(t.js(f"{code}('emuleCat')"), ['name=value', ';', '*', '0', '*default=0;Video=2', '*Audio=audio;Video=Video', ';', '\\;'],
+         'Category: the values')
+    t.check('Consolas' in t.js("getComputedStyle(document.querySelector('#GM_config .help code')).fontFamily"), 'monospace font')
+    t.check('Consolas' not in t.js("getComputedStyle(document.querySelector('#GM_config_checkFilter_var .help')).fontFamily"),
+            'the rest of the help in the font of the dialog')
+    t.eq(t.js("[].filter.call(document.querySelectorAll('#GM_config .help'), function (h) {"
+              "return h.textContent.indexOf('`') >= 0; }).length"), 0, 'no backquote shown')
+    tooltip = t.js("document.getElementById('GM_config_checkFilter_var').title")
+    t.check('case-insensitive: /expression/i.' in tooltip and '`' not in tooltip, 'the tooltip without backquotes', tooltip)

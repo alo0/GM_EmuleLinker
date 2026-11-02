@@ -481,6 +481,11 @@ def remove_profile(path):
     return False
 
 
+# the HTTP requests to the DevTools of Chrome: a Chrome that no longer answers becomes an error
+# instead of a run that never ends
+DEVTOOLS_TIMEOUT = 10
+
+
 class Chrome:
     name = 'Chrome'
 
@@ -502,11 +507,11 @@ class Chrome:
         with open(port_file) as f:
             lines = f.read().split()
         self.port, self.browser_path = int(lines[0]), lines[1]
-        version = json.load(urllib.request.urlopen(f'http://127.0.0.1:{self.port}/json/version'))
+        version = json.load(urllib.request.urlopen(f'http://127.0.0.1:{self.port}/json/version', timeout=DEVTOOLS_TIMEOUT))
         self.version = version.get('Browser', '').split('/')[-1]
 
     def targets(self):
-        return json.load(urllib.request.urlopen(f'http://127.0.0.1:{self.port}/json/list'))
+        return json.load(urllib.request.urlopen(f'http://127.0.0.1:{self.port}/json/list', timeout=DEVTOOLS_TIMEOUT))
 
     def page(self):
         main = next(t for t in self.targets() if t['type'] == 'page')
@@ -529,7 +534,7 @@ class Chrome:
         for t in self.targets():
             if t['type'] == 'page' and t['id'] != self.main_id:
                 try:
-                    urllib.request.urlopen(f'http://127.0.0.1:{self.port}/json/close/{t["id"]}').read()
+                    urllib.request.urlopen(f'http://127.0.0.1:{self.port}/json/close/{t["id"]}', timeout=DEVTOOLS_TIMEOUT).read()
                 except Exception:
                     pass
 

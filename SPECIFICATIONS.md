@@ -84,7 +84,7 @@ Web page                 Userscript                        ed2k client
 
 **Included**: detection, deduplication, display, selection, manual editing, categorization, sending, persistent configuration, keyboard shortcuts.
 
-**Excluded**: automatic update from the UI, multiple languages, extension filtering, status feedback from the ed2k client (no acknowledgment is read), queue management.
+**Excluded**: automatic update from the UI, multiple languages, hiding links by their name (a filter only chooses which ones are checked, SF-5.7), status feedback from the ed2k client (no acknowledgment is read), queue management.
 
 ---
 
@@ -103,7 +103,7 @@ Web page                 Userscript                        ed2k client
 | SF-1.7 | The link is **structurally validated** before use: at least 5 fields, type `file`, non-empty name, purely numeric size. Any non-compliant link — malformed (`ed2k://xxxx`) or of another type (`\|server\|`, `\|serverlist\|`) — is **silently ignored**, with a console trace. A bad link therefore cannot interrupt the scan of the page. |
 | SF-1.8 | If the file name still contains a `%XX` pattern, it is **decoded a second time** (names encoded twice by the source site) and the link is rebuilt. |
 | SF-1.9 | If an identical file name has already been met (but with a different link), a **` (n)` suffix** is added, `n` being the index of the link. <!-- markdownlint-disable-line MD038 --> |
-| SF-1.10 | The three arrays are filled only **after** validation and fixes, `eLinks` last: its length is authoritative, and no partial entry can be used. |
+| SF-1.10 | The four arrays are filled only **after** validation and fixes, `eLinks` last: its length is authoritative, and no partial entry can be used. |
 | SF-1.11 | An unexpected failure of the scan is **contained**: the keyboard shortcuts and the settings dialog keep working, only the popup is not displayed. |
 | SF-1.12 | The popup is displayed **only if at least one link** has been found. On a page without ed2k links, no shortcut and no menu entry opens it, and none of them raises an error. |
 
@@ -111,13 +111,13 @@ Web page                 Userscript                        ed2k client
 
 ### SF-2 — Display popup
 
-The popup in normal mode, after a sending to aMule 3.x; the numbers refer to the table under it:
+The popup in normal mode, after a sending to aMule 3.x, the eMule collection left unchecked by the filter of the settings (SF-5.7); the numbers refer to the table under it:
 
 ![The popup in normal mode, its parts numbered](screenshots/spec/popup.png)
 
 | # | Part | Rules |
 |---|---|---|
-| 1 | Box that checks or unchecks every link | SF-5.1 |
+| 1 | Box that checks or unchecks every link, mixed here | SF-5.1 |
 | 2 | **Add all links**: sends the checked links | SF-5.3, SF-7 |
 | 3 | **Edit mode** (Normal mode in edit mode) | SF-4 |
 | 4 | Category of the downloads | SF-6 |
@@ -127,7 +127,8 @@ The popup in normal mode, after a sending to aMule 3.x; the numbers refer to the
 | 8 | Box of a link, checked by default | SF-3.2, SF-5.2 |
 | 9 | File name: a click sends this file only | SF-3.3 |
 | 10 | Readable size | SF-3.4 |
-| 11 | Bottom toolbar, its box disabled | SF-2.7, SF-5.4 |
+| 11 | Bottom toolbar, its box as the top one | SF-2.7, SF-5.4 |
+| 12 | A link left unchecked by the filter of the settings, in gray | SF-5.7 |
 
 | Ref | Rule |
 |---|---|
@@ -146,11 +147,11 @@ The popup in normal mode, after a sending to aMule 3.x; the numbers refer to the
 | Ref | Rule |
 |---|---|
 | SF-3.1 | A table is displayed, one row per link: `[checkbox] [clickable file name] [readable size]`. |
-| SF-3.2 | All boxes are **checked by default**. |
+| SF-3.2 | All boxes are **checked by default**, except the links whose file name does not match the filter of the settings (SF-5.7). |
 | SF-3.3 | The file name is an **individual link**: a click sends this file only to the ed2k client, with the configured method. With every method but `local`, whose sending a link cannot make (a POST, a request of the script), the link holds the ed2k link itself, and the click sends this file only, the same way as "Add all links". With `local`, the link is the encoded ed2k link, handed to the application of the system (SF-7.7). |
 | SF-3.4 | The size is converted into readable binary units (`B`, `KiB`, `MiB`, `GiB`…, base 1024, no decimal). |
 | SF-3.5 | The hovered row is highlighted (light blue background). |
-| SF-3.6 | A tab order is assigned to the checkboxes. |
+| SF-3.6 | A tab order is assigned to the checkboxes, following the list: 1 for the first link, 2 for the second, and so on. |
 
 ### SF-4 — Edit mode
 
@@ -171,12 +172,13 @@ The popup in edit mode, the links selected as it opens:
 
 | Ref | Rule |
 |---|---|
-| SF-5.1 | A "check all / uncheck all" box in the top toolbar. |
+| SF-5.1 | A "check all / uncheck all" box in the top toolbar, and the same one in the bottom toolbar (SF-5.4). It is checked when every link is checked, unchecked when none is, and **mixed** otherwise; a click checks or unchecks every link, a mixed box checking them all. Both boxes follow the boxes of the links, checked by hand or by the filter of the settings (SF-5.7). |
 | SF-5.2 | Individual selection, row by row. |
 | SF-5.3 | Only checked links are sent by "Add all links" (in normal mode). |
-| SF-5.4 | The box of the bottom toolbar is present but **disabled** (visual consistency only). The box of the top toolbar is disabled **in edit mode**, where the list is a text area with no checkboxes. |
-| SF-5.5 | **Popup not displayed** (closed, or page without links while edit mode is stored): there is no selection to read, so **every link of the page is sent**. This is what makes `Ctrl+Alt+A` and the "Add links" menu entry usable without opening the popup. |
-| SF-5.6 | If the selection is empty — no box checked, or page without any ed2k link — sending is **abandoned without effect** (console trace, no window opened). Required because `@include *` makes the shortcut active on every page. |
+| SF-5.4 | Since 0.13, the box of the bottom toolbar does what the top one does, both showing the same state (SF-5.1); until 0.12, it was disabled, for visual consistency only. Both are disabled **in edit mode**, where the list is a text area with no checkboxes. |
+| SF-5.5 | **Popup not displayed** (closed, or page without links while edit mode is stored): there is no selection to read, so **the links that the popup would check are sent**: every link of the page whose file name matches the filter of the settings (SF-5.7), every link when it is empty. This is what makes `Ctrl+Alt+A` and the "Add links" menu entry usable without opening the popup. |
+| SF-5.6 | If the selection is empty — no box checked, no file name matching the filter with the popup closed, or page without any ed2k link — sending is **abandoned without effect** (console trace, no window opened). Required because `@include *` makes the shortcut active on every page. |
+| SF-5.7 | **Links checked by default** (since 0.13): a regular expression set in the settings (`checkFilter`, empty by default) chooses which links are checked when the popup is built. A link is checked when its file name matches it, and left unchecked otherwise, its name and its size in gray, the tooltip of its row telling why. The same field gives an allow list or a block list. **A**, every file but the eMule collections: `/^(?!.*\.emulecollection$)/i`. **B**, only the `.cbz`, `.cbr`, `.rar` and `.zip` files: `/\.(cbz\|cbr\|rar\|zip)$/i`. The expression is written alone (`\.cbz$`, case-sensitive), or between slashes followed by its flags, as in JavaScript (`/\.cbz$/i`, `i` ignoring the case); the flags `g` and `y` are refused, as they would make each test start where the previous one stopped. It is tested on the decoded file name (SF-1.8), without the suffix added by SF-1.9 (`eNames`), anywhere in the name unless anchored (`^`, `$`). The links left unchecked are still detected and listed (SF-1), and can be checked by hand or by the boxes of the toolbars (SF-5.1); the gray marks the links left unchecked by the filter, and stays when they are checked by hand. The edit box still lists every link (SF-4.1): the expression applies to the checkboxes only. Empty, every link is checked (SF-3.2). An expression that the browser cannot read is refused by Save (SF-8.10); one stored anyway is ignored, with a console trace, and every link is checked. |
 
 ### SF-6 — Categories
 
@@ -213,7 +215,7 @@ Cross-cutting rules:
 | SF-7.2 | For the GET methods, the file name is normalized (`decodeURIComponent` then `encodeURIComponent`) **then the whole link is encoded again**: the name ends up deliberately encoded twice, which is what the eMule/aMule web interfaces expect. |
 | SF-7.3 | For `custom` and `amuleapi`, no additional encoding is applied (the POST takes care of it). |
 | SF-7.4 | `amule` mode: until 0.11, a first window logged in (`footer.php?pass=<pwd>`), then, after a **fixed wait of 1 second**, a second one sent the links. Since 0.12, the login is a request of the script, awaited, and the links are sent in the same session (SF-7.13). |
-| SF-7.5 | Until 0.11, `blur()` was called on the windows opened by the sending, to try to give the focus back to the main page (no longer effective on recent browsers). Since 0.12, only `custom` still opens one: it posts its form in a tab named `emule` (I-2); the other methods send their requests themselves. |
+| SF-7.5 | Until 0.11, `blur()` was called on the windows opened by the sending, to try to give the focus back to the main page (no longer effective on recent browsers). Since 0.12, only `custom` still opens one: it posts its form in a tab named `emule` (I-12); the other methods send their requests themselves. |
 | SF-7.6 | In normal mode, the source is the **selection of checked boxes**; in edit mode, it is the **raw content of the text area**, split by line. |
 | SF-7.7 | `local` method: the link is **encoded by the script** (`encodeEd2kLink()`), both in the clickable links of the popup and when sending in batch. `ed2k` is not a *special scheme*: everything after `ed2k://` up to the final `/` is parsed as the host of the URL, where `\|`, space, `#`, `?`, `[`, `]`… are forbidden. Recent Chrome turns such a link into `about:blank` instead of encoding it, as older browsers used to do (0.2 in `CHANGELOG.md`). This whole part therefore goes through `encodeURIComponent`, after a prior decoding so that an already encoded link is not encoded twice; `ed2k://` and the final `/` stay in clear. ed2k handlers decode the link they receive. The other methods are not affected: their `http://` URL already encodes the whole link. |
 | SF-7.8 | `local` method: the link is **never passed to `location.replace()`**, which rejects it (`SyntaxError`, the URL degenerating into `ed2k:///`) and would replace the document — only the last link of a batch would be sent. The script clicks one **synthetic anchor** per link. |
@@ -242,7 +244,7 @@ The settings dialog, with a server of each kind: aMule NAS is checked (it receiv
 | 8 | **Test**, for `emule`, `amuleapi`, `amule` and `mldonkey` | SF-8.16, SF-8.17 |
 | 9 | **Import**, for `emule`, `amuleapi` and `amule` | SF-8.16, SF-8.18 |
 | 10 | **+ Add a server** | SF-8.14 |
-| 11 | Section Popup | SF-2.2, SF-2.3 |
+| 11 | Section Popup, its last field Links checked by default | SF-2.2, SF-2.3, SF-5.7 |
 | 12 | Section Edit box | SF-4.4 |
 | 13 | **Reset to defaults** | SF-8.12 |
 | 14 | **Save** and **Close** | SF-8.4, SF-8.5, SF-8.11 |
@@ -253,14 +255,14 @@ The settings dialog, with a server of each kind: aMule NAS is checked (it receiv
 |---|---|
 | SF-8.1 | A settings dialog is provided, titled with the version of the script ("Emule Linker 0.x — Settings", from the userscript manager), organized in 3 sections: download method, popup, edit box. It has the colors of the popup (white, light blue, steel blue `#2b5c8a` for its border and its section titles, not the blue of links), is half of the window wide, between 640 and 960 px (95 % of the window at most), fits its content in height, and its fields are aligned in a column: the long ones (Server URL, Password with its Show button, Category) take the whole width of the column, as their explanation; the others are sized to their content. Built inside the page by GM_config (§ 3.3), it does not take the text styles of the page: its text is aligned as designed (to the left, the labels to the right), with a normal line height and spacing, without capitals, indent or italics, even on a page that centers its text. |
 | SF-8.2 | It opens **automatically on first run** (as long as the `emule_config` flag is 0). |
-| SF-8.3 | Each field has an **explanation**, shown under it in a light blue box. A **Show help / Hide help** button at the right of the title shows or hides the explanations of every field at once; they are not shown on mouse over, as the fields would then move under the mouse. While they are hidden, each one is also the tooltip of its row, shown by the browser after a short delay over it, for an occasional need; while they are shown, there is no tooltip repeating them. The choice is stored (`settings_help`): the dialog opens the next time as it was left. |
+| SF-8.3 | Each field has an **explanation**, shown under it in a light blue box; the code it holds (an address, a value, a regular expression) is in a fixed-width font, as the field Links checked by default; in the tooltip, it is plain text. A **Show help / Hide help** button at the right of the title shows or hides the explanations of every field at once; they are not shown on mouse over, as the fields would then move under the mouse. While they are hidden, each one is also the tooltip of its row, shown by the browser after a short delay over it, for an occasional need; while they are shown, there is no tooltip repeating them. The choice is stored (`settings_help`): the dialog opens the next time as it was left. |
 | SF-8.4 | **Save** and **Close** buttons, and a **Reset to defaults** button at the left (SF-8.12). |
 | SF-8.5 | Saving **reloads the page** to apply the new settings. |
 | SF-8.6 | Settings are persisted through the userscript manager storage (they survive a browser restart and are shared across all sites). |
 | SF-8.7 | When an invalid setting is replaced by a usable value (URL without a final `/`, no valid category, popup too small), the corrected value is **stored**, so the alert is shown once and not again on every page load. Only the corrected settings are stored: the other ones stay exactly as the user saved them. |
 | SF-8.8 | The **password is masked**; a Show / Hide button next to it displays it. |
 | SF-8.9 | The section **Servers** lists, after a fixed **Local** row (no settings), the servers of the user: for each one a radio button, which chooses the server that receives the links, its name, its download method, its Server URL, and its **Edit** and **Delete** buttons. Under the server being edited are shown its Name, its Ed2k Download Method (every method but `local`) and **only the fields that this method uses**: Server URL, User and Password for `mldonkey`, Server URL and Category for `custom`, Server URL, Password and Category for the others; changing its method changes the fields shown. |
-| SF-8.10 | The values are **checked before saving**: a Server URL that does not start with `http://` or `https://` (every method, `custom` included: no other protocol is supported), a category list without any valid entry, a popup height between 1 and 39 px or a width between 1 and 99 px (the Settings button would be hidden), a size that is not a whole number, or an edit box of 0 column or row. Each wrong value is shown in red under its field, the focus goes to the first one, no alert is shown and nothing is saved until every value is right. SF-8.7 still covers the values stored by an older version. |
+| SF-8.10 | The values are **checked before saving**: a Server URL that does not start with `http://` or `https://` (every method, `custom` included: no other protocol is supported), a category list without any valid entry, a popup height between 1 and 39 px or a width between 1 and 99 px (the Settings button would be hidden), a size that is not a whole number, an edit box of 0 column or row, or a filter of the links checked by default that is not a valid regular expression, or that holds the flag `g` or `y` (SF-5.7). Each wrong value is shown in red under its field, the focus goes to the first one, no alert is shown and nothing is saved until every value is right. SF-8.7 still covers the values stored by an older version. |
 | SF-8.11 | The page is **dimmed behind the dialog**, and **Escape** closes it without saving. |
 | SF-8.12 | **Reset to defaults** sets every setting back to its default value **in the dialog only**: Local is checked, **every server removed**, and the other fields set back to their default value. What it changed is highlighted, and a notice says how many settings changed and that nothing is saved yet. Its **Undo** button displays everything as before again. Save stores the defaults, Close or Escape forget them. |
 | SF-8.13 | The dialog is **anchored at the top of the window** (10 px), centered in width, and never higher than the window: when it does not fit, it **scrolls inside**, so that its bottom and its Save button are always reachable, even when the window is made lower once the dialog is open. |
@@ -310,6 +312,7 @@ A server deleted: the notice takes its place in the list, with its **Undo** butt
 | `popupPos` | radio | `fixed` | `absolute` \| `fixed` |
 | `popupHeight` | integer | `800` | If `0 < h < 40`, forced to `0` (otherwise the Settings button becomes unreachable) |
 | `popupWidth` | integer | `800` | If `0 < w < 100`, forced to `0` (same reason) |
+| `checkFilter` (Links checked by default) | text | empty | A JavaScript regular expression, alone or as `/expression/flags`; must be valid, without the flags `g` and `y` (SF-8.10); empty: every link checked (SF-5.7). Not a setting of a server: the same for all of them |
 | `editCol` | integer | `80` | — |
 | `editRow` | integer | `16` | — |
 
@@ -395,13 +398,16 @@ Storage automatically falls back to `localStorage` when the `GM_getValue` API is
 
 ### 3.4 Data model
 
-**Global state in memory** — three parallel arrays with consistent indexes:
+**Global state in memory** — four parallel arrays with consistent indexes:
 
 ```js
 eLinks[i]  // full ed2k link, decoded       "ed2k://|file|name.mp3|1048576|HASH|/"
 eFiles[i]  // displayed file name           "name.mp3"  (suffixed " (i)" if duplicate)
 eSizes[i]  // size in bytes, raw            "1048576"
+eNames[i]  // file name, without the suffix "name.mp3"  (tested by the filter, SF-5.7)
 ```
+
+The filter of the links checked by default is read once, by `saveConfig()`, into `checkRegExp` (`null`: every link checked).
 
 **Structure of an ED2K link** after `split('|')`:
 
@@ -409,7 +415,7 @@ eSizes[i]  // size in bytes, raw            "1048576"
 |---|---|---|
 | 0 | scheme | `ed2k://` |
 | 1 | type | `file` |
-| 2 | **file name** | `example1.mp3` |
+| 2 | **file name** | `example1.cbz` |
 | 3 | **size (bytes)** | `1048576` |
 | 4 | MD4 hash (32 hexadecimal characters) | `ABCDEF1234567890ABCDEF1234567890` |
 | 5+ | optional: AICH hash `h=…`, sources, then `/` | `h=YNCK…` |
@@ -441,7 +447,7 @@ Page load
   │    ├─ if emule_config < 1 → GM_config.open()   (first run)
   │    └─ saveConfig()                              (config → global variables + validation)
   │
-  ├─ try { getEd2kLinks(eLinks, eFiles, eSizes) } → n   (failure contained, n = 0)
+  ├─ try { getEd2kLinks(eLinks, eFiles, eSizes, eNames) } → n   (failure contained, n = 0)
   │    └─ per link: isEd2kLink → decodeEd2kLink → deduplication
   │                → split('|') → isValidEd2kFile → storage
   │
@@ -476,7 +482,7 @@ addButton()
 
 | Function | Responsibility |
 |---|---|
-| `getEd2kLinks(links, files, sizes)` | XPath scan, decoding, deduplication, validation, name/size extraction, suffixing |
+| `getEd2kLinks(links, files, sizes, names)` | XPath scan, decoding, deduplication, validation, name/size extraction, suffixing |
 | `isEd2kLink(href)` | Recognizes the `ed2k` scheme, literal or encoded at any depth |
 | `decodeEd2kLink(href)` | Decodes in successive passes until the scheme is readable (max 4) |
 | `isValidEd2kFile(tlnk)` | Structural validation of the split link (5 fields, `file` type, name, numeric size) |
@@ -486,13 +492,17 @@ addButton()
 | `addToolbar(container, pos)` | Top (`pos=0`) or bottom (`pos=1`) toolbar |
 | `addEditBox(container, txt)` / `delEditBox()` | Text area (edit mode) |
 | `concatLinks(links)` | Joins the links, separated by `\n` |
-| `getSelectLink(links)` | Extracts the links whose box is checked; every link when the boxes do not exist |
+| `getSelectLink(links)` | Extracts the links whose box is checked; when the boxes do not exist, the links checked by default (SF-5.5) |
+| `parseCheckFilter(str)` | Reads the filter of the links checked by default: the regular expression, or why it is refused (SF-5.7, SF-8.10) |
+| `checkedByDefault(name)` | Tells whether a file name matches the filter, always when it is empty (SF-5.7) |
+| `checkButton(checkbox)` / `syncCheckAll()` | The "check all" boxes of both toolbars: every link takes the state of the box clicked; both boxes show the state of the links (SF-5.1) |
+| `setHelpText(help, text)` | Writes the help of a field, its code (between grave accents in the text) in a fixed-width font (SF-8.3) |
 | `getSelectedCat()` | Reads the selected category from `emuleCat` (independent of the DOM) |
 | `getAddLink(links)` | **Core of the adaptation**: encoding and building of the URL/payload per method |
 | `addButton()` | Triggers the sending (asynchronous) |
 | `openButton()` | Opens the popup, unless it is already open or the page has no ed2k link |
 | `debugButton()` | Switches the debug traces on or off, and stores the choice |
-| `editButton()` / `closeButton()` / `setButton()` / `checkButton()` / `changeCat()` | UI action handlers |
+| `editButton()` / `closeButton()` / `setButton()` / `changeCat()` | UI action handlers |
 | `scriptConfig()` / `saveConfig()` / `resetConfig()` | Configuration lifecycle |
 | `catToStr(cat)` / `strToCat(str)` | Category serialization |
 | `post(path, params, method)` | Sends through an HTML form (`custom` method), removed from the page once submitted |
@@ -555,7 +565,7 @@ addButton()
 
 ### 3.9 The `emule` method without a window
 
-**Why.** Until 0.11, the `emule` method opened a window on the URL of the sending: a visible window at each sending, sometimes blocked (L-4), the URL with the password kept in the history of the browser (L-1), and no answer for the user (L-8). Since 0.12, the same GET request is made by the script, through **`GM_xmlhttpRequest`**, as for `amuleapi` (§ 3.8): no window, and the answer of eMule is read. The `amule` and `mldonkey` methods followed, in 0.12 too (§ 3.10, § 3.11); `custom` is still to do (I-2).
+**Why.** Until 0.11, the `emule` method opened a window on the URL of the sending: a visible window at each sending, sometimes blocked (L-4), the URL with the password kept in the history of the browser (L-1), and no answer for the user (L-8). Since 0.12, the same GET request is made by the script, through **`GM_xmlhttpRequest`**, as for `amuleapi` (§ 3.8): no window, and the answer of eMule is read. The `amule` and `mldonkey` methods followed, in 0.12 too (§ 3.10, § 3.11); `custom` is still to do (I-12).
 
 **What eMule answers** (eMule 0.70b, checked against the real eMule of the live test; other versions may answer otherwise):
 
@@ -654,7 +664,7 @@ The columns are the labels of the settings dialog; the methods are, in the same 
 | L-1 | **Password in clear**: in the URL with `emule` and `amule` (`p=`, `pass=`), in the HTTP Basic authorization with `mldonkey` (base 64, not encrypted): readable in the web server logs, and on the network when using HTTP. Since 0.12, no method opens a window: the URLs are no longer in the browser history. → The README explicitly recommends HTTPS to access the remote client. The `amuleapi` method is not concerned (§ 3.8). |
 | L-2 | **Limited URL length** with GET (browser, proxies, eMule/aMule web server). Beyond it, the sending fails. With `emule`, `amule` and `mldonkey`, the answer of the client is shown since 0.12, so that it is no longer silent; what each client answers beyond its limit has not been checked. → Workaround: send the links in batches. |
 | L-3 | **Mixed content / CORS**: a silent XHR sending from an HTTPS page to an eMule served over HTTP is blocked. This is why `silentPost()` was abandoned (removed in 0.11). The `amuleapi`, `emule`, `amule` and `mldonkey` methods are not concerned: `GM_xmlhttpRequest` is made by the userscript manager, outside the page. |
-| L-4 | **Popup blockers**: opening a window can be blocked when it is not seen as triggered by a user gesture — especially the second aMule window after `await sleep(1000)`. → **Solved in 0.12** for every method but `custom`, which still posts its form in a tab named `emule` (I-2). |
+| L-4 | **Popup blockers**: opening a window can be blocked when it is not seen as triggered by a user gesture — especially the second aMule window after `await sleep(1000)`. → **Solved in 0.12** for every method but `custom`, which still posts its form in a tab named `emule` (I-12). |
 | L-5 | **Deprecated `blur()`**: giving the focus back to the main page no longer works on recent browsers. → No longer used since 0.12: no window is opened. |
 | L-6 | **aMule login workaround based on a fixed delay** (1 s): fragile with a slow server or network latency. → **Solved in 0.12**: the login is awaited (SF-7.13). |
 | L-7 | **`@include *`**: the script runs on every visited page, including sensitive HTTPS pages. The popup only appears when ed2k links are detected, but the DOM scan and the injection of the settings `<div>` always take place. |
@@ -670,16 +680,21 @@ The `amuleapi` method is free of L-1, L-2, L-4, L-5, L-6 and L-8 (§ 3.8).
 
 By decreasing value:
 
-| Ref | Improvement |
-|---|---|
-| I-1 | **Silent sending for the `emule`, `amule` and `mldonkey` methods** (**done in 0.12**), through `GM_xmlhttpRequest` as `amuleapi` does (§ 3.8), instead of a window, one method at a time: `emule` (SF-7.12, § 3.9), checked against the real eMule of the live test; `amule` (aMule 2.x, SF-7.13, § 3.10), checked against an aMule 2.3.3 in a Docker container; `mldonkey` (SF-7.14, § 3.11), checked against an MLDonkey 3.2.1 in a Docker container. For each of them: not subject to CORS nor to mixed content (L-3), no window opened (L-4, L-5), the `amule` login awaited instead of a fixed delay (L-6), the password no longer in the browser history (L-1, still in the URL expected by these web interfaces), and the answer of the client shown in the popup (L-8, SF-7.10). The only interaction left is the permission asked once per address by Tampermonkey (`@connect`). The `local` method is not concerned (`ed2k:` protocol). |
-| I-2 | **Silent sending for the `custom` method** (to do), the same way: its POST made by `GM_xmlhttpRequest` instead of a form posted in a tab named `emule` (SF-7.5), so that no tab is opened, and the answer of the server shown in the popup (L-8). What a custom server is expected to answer is still to be defined (an HTTP status, for instance). To be checked against a real server. |
-| I-3 | **Automatic batch sending** when the URL exceeds a length threshold (L-2). |
-| I-4 | **Extension filter** (allow list / block list) in the settings. |
-| I-5 | **A counter of the links ignored** by SF-1.7, currently rejected silently, shown in the popup. The answer of the client to a sending is shown since 0.12 for every method but `local` (no answer from the `ed2k:` protocol) and `custom` (I-2). |
-| I-6 | **Choose the server from the popup**: a drop-down list of the servers in the toolbar of the popup, as the one of the categories, to send the links to another server without opening the settings (SF-8.14). |
-| I-7 | **General section of the settings dialog**, first in the dialog: the **language** (by default that of the browser) and a **text size** among a few predefined ones (for instance small, normal, large, instead of the fixed 10 px of the popup, SF-2.5). Both apply to every screen of the script: the popup, its edit mode, the settings dialog and the messages. The texts would be gathered in one table per language; the alerts keep the size of the browser. Online help could follow. |
-| I-8 | **Technical work**: separate the GM_config library from the business script (through `@require` on a frozen copy) and modernize the syntax. The automated test suite (§ 7.2) makes such changes safer. |
+| Ref | Improvement | Target version |
+|---|---|---|
+| I-1 | **Selection filter**<br /> As described in SF-5.7.<br /> Feature requested by a user. | 0.13 |
+| I-2 | **Main popup UX/UI revamp**<br /> Three views: maximized (the list of the links, as today), minimized (only the top toolbar, with the number of links) and closed; a button switches between minimized and maximized.<br /> The state of the popup (`popup_mode`: normal, edit, minimized or closed) applies to the current page only: each page opens in the default view of the settings (I-4), instead of the last state stored (SF-10.2).<br /> Making room for new features: icons for some buttons, their label in a tooltip; shortcuts and labels updated. To be specified with mockups. | 0.14 |
+| I-3 | **Message box** when the main popup is closed (Close button or `Ctrl+Alt+C`), telling how to open it again: a box inside the page, not a browser alert (`alert()`), with a checkbox "Don't display again". The message can be enabled again in the settings (I-4). | 0.14 |
+| I-4 | **General section** in the settings dialog, holding:<br /> - Language (I-7)<br /> - Theme (I-8)<br /> - Default view of the popup: maximized (default), minimized or closed (I-2): a user who wants the popup closed on every page chooses it here<br /> - Text size (I-9)<br /> - The message shown when the popup is closed (I-3) | 0.14 |
+| I-5 | **Online help**<br /> Available from a button in the main popup: a new popup showing the help page of the GitHub repository in an inline frame (`iframe`) (to be tested before deciding), with at least a guide to the shortcuts and the main features of the popup. Its version (`master`, or the tag of the installed version) is still to be decided. No offline mode: without network, the script is of no use anyway. | 0.14 |
+| I-6 | **Choose the server from the popup**: a drop-down list of the servers, Local included, in the toolbar of the popup, as the one of the categories, to send the links to another server without opening the settings (SF-8.14); shown only if more than one server is configured. The choice applies to the current page only, as the category (SF-6.9): each page starts on the server checked in the settings. The list of the categories follows the server chosen. The order of the list is still to be decided. | 0.14 |
+| I-7 | **Multiple language support**<br /> The **language** (by default that of the browser) applies to every screen of the script: the popup, its edit mode, the settings dialog and the messages. The texts would be gathered in one table per language. English first, French later. | |
+| I-8 | **Theme support**<br /> Propose different themes without reducing performance. Still to be decided: the themes, and keeping their CSS in separate files, to keep the main JavaScript file light, which would mean going back on the single file without `@require` nor `@resource` (§ 3.2), as I-13 does. | |
+| I-9 | **Text size** among a few predefined ones (for instance small, normal, large, instead of the fixed 10 px of the popup, SF-2.5). It applies to the popup, its edit mode and the messages, the alerts keeping the size of the browser; the settings dialog too, still to be decided. To be specified with mockups. | |
+| I-10 | **Automatic batch sending** when the URL exceeds a length threshold (L-2), for the methods sending a GET (`emule`, `amule`, `mldonkey`). Still to be decided: a fixed threshold, below the limits measured on the clients, rather than a setting that the user could hardly choose. | |
+| I-11 | **Export to CSV and eMule collection (`.emulecollection`)**<br /> Add a button to export the selected links to different formats. Check whether generating and downloading the file in one click is possible with Tampermonkey (`GM_download`, or a link in the page). Still to be decided: the columns of the CSV, the format of the collection (text or binary), and the links exported (checked or all). | |
+| I-12 | **Silent sending for the `custom` method**, as the other methods since 0.12: its POST made by `GM_xmlhttpRequest` instead of a form posted in a tab named `emule` (SF-7.5), so that no tab is opened, and the answer of the server shown in the popup (L-8). What a custom server is expected to answer is still to be defined (an HTTP status, for instance). To be checked against a real server. | |
+| I-13 | **Technical work**: separate the GM_config library from the business script (through `@require` on a frozen copy) and modernize the syntax. The automated test suite (§ 7.2) makes such changes safer. | |
 
 ---
 
@@ -692,14 +707,14 @@ By decreasing value:
 | # | Case | Expected |
 |---|---|---|
 | — | **Malformed** link `ed2k://xxxxxxxx`, first link of the page | Ignored, **and the 9 valid links that follow are still displayed** (non-regression of the 0.10 fix) |
-| 1-2 | Simple links (audio, video) | Detected, exact name and size |
+| 1-2 | Simple links (comic book, video); 1 is the only one checked by the example B of SF-5.7 | Detected, exact name and size |
 | 3 | Additional **AICH** hash (`h=…`) | Detected and displayed normally |
 | 4 | **Raw** special characters (accents, spaces, parentheses) | Name displayed as is |
 | 5 | Name **encoded once** (UTF-8) | Decoded once |
 | 6 | Name **encoded twice** (`%25`) | Decoded twice |
 | 7 | `ed2k://` kept, **rest encoded** (`%7C`, `%2F`) | Detected, name correctly decoded |
 | 8 | A **fully encoded** link (`ed2k%3A%2F%2F`) | Detected after 1 pass, name correctly decoded |
-| 9 | Scheme **encoded twice** (`ed2k%253A%252F%252F`) | Detected after 2 passes, name correctly decoded |
+| 9 | Scheme **encoded twice** (`ed2k%253A%252F%252F`); an eMule collection (`.emulecollection`, as eMule names them), the only link left unchecked by the example A of SF-5.7, once decoded | Detected after 2 passes, name correctly decoded |
 | — | **Server** link, last link of the page | Ignored |
 
 All valid links follow the ed2k format: MD4 hash of 32 hexadecimal characters, numeric size. eMule and aMule reject a hash of any other length.
@@ -727,10 +742,10 @@ The exit code is 1 when a test fails. The options combine: `--live-amule --firef
 
 | Level | File | Content |
 |---|---|---|
-| 0 — Repository | `tests/test_repository.py` | Without the browser: `@version` and `CHANGELOG.md` agree, `CHANGELOG.md` is in order, the header of the script holds no list of changes, no other file writes a version (§ 3.2); the update URLs, and the former address `GM_EmuleLinker.js` leading to the new one (§ 3.2); the address of the repository set in the PARAM block, the one of `@updateURL` (SF-8.15); no dead code left in the script (§ 3.6); no field of the settings dialog declaring a key twice (§ 3.3); every picture shown by the documents exists, is taken by `take_screenshots.py`, and every picture of `screenshots/` is shown (§ 3.1); the indentation set by `.editorconfig`, no blank at the end of a line, a final newline (§ 3.1) |
-| 1 — Functions | `tests/test_units.py` | Tables of cases for `isEd2kLink`, `decodeEd2kLink`, `isValidEd2kFile`, `encodeEd2kLink`, `strToCat`, `catToStr`, `mergeCategories`, `amuleWebCategory`, `humanFileSize` |
-| 2 — Scenarios | `tests/test_scenarios.py` | Detection on `test_sample.html`, page without ed2k links, first run, shortcuts, opening and closing the popup, menu entries, a huge number of links, toolbars staying visible, categories, settings dialog (look, help, masked password, Escape, width and borders, links to the repository, low window, list of the servers, two servers of the same method, fields shown per method, names required and different, Delete and Undo, style and place of Undo, Reset and Undo, values checked before saving, the Server URL in `http://` or `https://` for every method, settings saved), download methods in the settings, edit mode, `local` method, corrected settings stored, optional eMule password |
-| 2 — Sending | `tests/test_sending.py` | Against the fake clients: `emule` (without a window: the answers of eMule shown, popup closed, waiting and no second sending, lines of the edit box left out, password encoded; all links, popup closed, partial selection, category change keeping the popup and the edit box text, edit box text, single link click), `amule` (without a window: login then links in the same session, check of the downloads, answers, an accented category encoded as aMule 2.3.3 reads it, edit box, popup closed; Test and Import), `amuleapi` (login, JSON sending and logout, category, single link click, edit mode, answers of aMule shown, popup closed; in the settings dialog, Test and Import: buttons shown per method, the address and the password typed, every answer of aMule, waiting, every page of the categories, Undo, nothing saved), `mldonkey`, `custom` (POST form), Test and Import with eMule, nothing sent when there is nothing to send |
+| 0 — Repository | `tests/test_repository.py` | Without the browser: `@version` and `CHANGELOG.md` agree, `CHANGELOG.md` is in order, the header of the script holds no list of changes, no other file writes a version (§ 3.2); the update URLs, and the former address `GM_EmuleLinker.js` leading to the new one (§ 3.2); the address of the repository set in the PARAM block, the one of `@updateURL` (SF-8.15); no dead code left in the script (§ 3.6); no field of the settings dialog declaring a key twice (§ 3.3); every picture shown by the documents exists, is taken by `take_screenshots.py`, and every picture of `screenshots/` is shown (§ 3.1); the indentation set by `.editorconfig`, no blank at the end of a line, a final newline (§ 3.1); a time limit on every HTTP request of the test tools, so that a browser or a client that no longer answers stops the run with an error (§ 7.2) |
+| 1 — Functions | `tests/test_units.py` | Tables of cases for `isEd2kLink`, `decodeEd2kLink`, `isValidEd2kFile`, `encodeEd2kLink`, `strToCat`, `catToStr`, `mergeCategories`, `amuleWebCategory`, `humanFileSize`, `parseCheckFilter`, `checkedByDefault` |
+| 2 — Scenarios | `tests/test_scenarios.py` | Detection on `test_sample.html`, page without ed2k links, first run, shortcuts, opening and closing the popup, menu entries, a huge number of links, toolbars staying visible, categories, settings dialog (look, help, masked password, Escape, width and borders, links to the repository, low window, list of the servers, two servers of the same method, fields shown per method, names required and different, Delete and Undo, style and place of Undo, Reset and Undo, values checked before saving, the Server URL in `http://` or `https://` for every method, settings saved, the field Links checked by default, the code of the helps), download methods in the settings, edit mode, `local` method, corrected settings stored, optional eMule password, links checked by default (the examples of the help, the case, names of the same file, a stored filter that cannot be read), the "check all" boxes of both toolbars |
+| 2 — Sending | `tests/test_sending.py` | Against the fake clients: `emule` (without a window: the answers of eMule shown, popup closed, waiting and no second sending, lines of the edit box left out, password encoded; all links, popup closed, partial selection, category change keeping the popup and the edit box text, edit box text, single link click), `amule` (without a window: login then links in the same session, check of the downloads, answers, an accented category encoded as aMule 2.3.3 reads it, edit box, popup closed; Test and Import), `amuleapi` (login, JSON sending and logout, category, single link click, edit mode, answers of aMule shown, popup closed; in the settings dialog, Test and Import: buttons shown per method, the address and the password typed, every answer of aMule, waiting, every page of the categories, Undo, nothing saved), `mldonkey`, `custom` (POST form), Test and Import with eMule, nothing sent when there is nothing to send, the links checked by default sent (popup open or closed, edit mode) |
 | 3 — Live | `tests/test_live_emule.py`, `tests/test_live_amule.py`, `tests/test_live_amuleweb.py`, `tests/test_live_mldonkey.py` | Optional, against the running eMule, a running aMule 3.1, a running aMule 2.x and a running MLDonkey (below) |
 
 Each test names the rule (SF-x) or section (§) it checks. Many checks read the debug traces: the tests switch them on through the `debug_mode` setting, whatever the default of the script.
@@ -755,7 +770,7 @@ What depends on elements outside the reach of the suite — the extension (Tampe
 4. `emule` method, on Chrome and on Firefox: at the first sending, Tampermonkey asks to allow the address of eMule; once allowed, "Add all links" adds the 9 links to eMule, in the selected category, without opening a window, and the popup shows "9 link(s) added to eMule". In the settings dialog, Test shows "Connected to eMule…", and Import fills the Category field with the categories of eMule, an accented name intact (the live test checks it through the test server, not through Tampermonkey).
 5. `amule` method, when an aMule 2.x is available: "Add all links" adds the 9 links, in the selected category, without opening a window, and the popup shows "9 link(s) added to aMule": the session cookie is kept by the userscript manager between the login and the links (to check in Tampermonkey and in Violentmonkey). Test shows "Connected to aMule 2.…", Import fills the Category field (name=name), an accented name intact. `mldonkey` method: the same, "9 link(s) added to MLDonkey", without the browser asking for the user and the password; with a wrong password, the popup shows the error, and the browser must not show its own login dialog (checked in 0.12, Tampermonkey on Chrome and on Firefox). Test shows "Connected to MLDonkey 3.…".
 6. `amuleapi` method, in Tampermonkey on Chrome and on Firefox: at the first sending, Tampermonkey asks to allow the address of aMule (`@connect`); once allowed, "Add all links" adds the 9 links to aMule 3.1, in the selected category, and the popup shows "9 link(s) added to aMule". With a wrong password, the popup shows the error. In the settings dialog, before any sending to this address, **Test** triggers the same permission request of Tampermonkey, then shows "Connected to aMule…"; **Import** fills the Category field with the categories of aMule. When Tampermonkey loads the script through a loader script (`@require`), only the header of the loader counts: it must carry the `@grant` and `@connect` lines of the script, otherwise `GM_xmlhttpRequest` is not defined.
-7. The settings survive a browser restart. The settings dialog, in Tampermonkey on Chrome and on Firefox, shows the help of a field under it, lists the servers, keeps two servers of the same method apart, shows under a server only the fields of its method, and refuses a wrong value in red under its field.
+7. The settings survive a browser restart. The settings dialog, in Tampermonkey on Chrome and on Firefox, shows the help of a field under it, lists the servers, keeps two servers of the same method apart, shows under a server only the fields of its method, and refuses a wrong value in red under its field. **Links checked by default** (SF-5.7), on `test_sample.html`: with the first example of its help, only the eMule collection (link 9) is unchecked, in gray; with the second one, only `example1.cbz` stays checked; the boxes of both toolbars are mixed, and a click on one of them checks every link (checked in 0.13, Tampermonkey on Chrome and on Firefox).
 8. **Change of address** (§ 3.2), for the 0.10 only: run `python tests/migration_check.py` and follow the steps it prints, in a browser profile with Tampermonkey but without the real Emule Linker. A local server stands for GitHub: Tampermonkey installs the 0.9, updates to 0.10 from the former address, then to a simulated next version from the new one, and the settings are kept.
 
 The test files added by hand to eMule and aMule in checks 3 to 6 must then be cancelled by hand.
@@ -769,7 +784,9 @@ The users get a new version through `@updateURL`, which points to the `master` b
 3. Check the `@version` of `GM_EmuleLinker.user.js` and, in `CHANGELOG.md`, set the date of the first entry to the publication day; check that this entry lists every change of the version, and that its comparison link at the bottom of the file points to the new tag. For the 0.10 only, copy it then to `GM_EmuleLinker.js` (§ 3.2); from the 0.11 on, this frozen copy is no longer touched.
 4. Retake the screenshots from this version: `python tests/take_screenshots.py <folder>` writes them under a folder of your choice, to compare them with the current ones, and without a folder replaces them in `screenshots/`: the README ones (`screenshot_main.png`, the popup, and `screenshot_settings.png`, the settings dialog) and the ones of this document (`screenshots/spec/`). Look at each of them: the numbered markers must still point at their part (their legends are in SF-2 and SF-8), and nothing personal may appear. The settings are fictitious, and the test page is served locally, without any other tab, bookmark or account.
 5. Run `python tests/run_tests.py --chrome --firefox`, then the same with `--live-emule`, `--live-amule`, `--live-amuleweb` and `--live-mldonkey`, and the manual checks of § 7.3.
-6. Run `python tests/check_publication.py` again: steps 3 and 4 changed the version.
-7. Merge the version branch into `master`.
-8. Tag the merge: `git tag vX.Y`.
-9. Push `master` and the tag: `git push origin refs/heads/master refs/tags/vX.Y` (full names: a branch or a tag of the same name would make `vX.Y` ambiguous).
+6. **Reorder the entry of the version in `CHANGELOG.md`**, its changes having been added as they came: in each section (Added, Changed, Removed, Fixed), what the user sees first, by decreasing importance and in the order of the download methods (Local, eMule, aMule 3.x, aMule 2.x, MLDonkey, Custom), then the documentation, the code, the tests and the tools. The text of the changes is left as it is; the commit is amended.
+7. Run `python tests/check_publication.py` again: steps 3, 4 and 6 changed the version.
+8. Merge the version branch into `master`.
+9. Tag the merge: `git tag vX.Y`.
+10. Push `master` and the tag: `git push origin refs/heads/master refs/tags/vX.Y` (full names: a branch or a tag of the same name would make `vX.Y` ambiguous).
+11. **Propose a summary of the release**, to announce it (release notes on GitHub, forums): its title `vX.Y (YYYY-MM-DD)`, a few bullets on its main changes, in the words of a user rather than of the code, and the link to the full changes, `Full Changelog: vX.W...vX.Y`. For instance, for 0.11: "New download method aMule 3.x (amuleapi), for aMule 3.1 and later, through its REST API", "Complete revamp of the settings dialog to choose one or multiple download methods", "Old code cleaning", "Doc and automated test update".

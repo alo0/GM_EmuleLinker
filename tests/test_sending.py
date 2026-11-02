@@ -11,7 +11,7 @@ from urllib.parse import unquote
 
 # The 9 valid links of test_sample.html, as an ed2k client must read them: name, size, hash
 EXPECTED = {
-    ('example1.mp3', '1048576', 'ABCDEF1234567890ABCDEF1234567890'),
+    ('example1.cbz', '1048576', 'ABCDEF1234567890ABCDEF1234567890'),
     ('example2.avi', '734003200', '123456ABCDEF7890123456ABCDEF7890'),
     ('Documentary Planet Earth 4K.mp4', '4294967296', '1A2B3C4D5E6F7A8B9C0D1E2F3A4B5C6D'),
     ('Été à Paris (Café).mp3', '8543210', '3F8E1D2C4B5A69786950413EAB7CD821'),
@@ -19,7 +19,7 @@ EXPECTED = {
     ('François & Marie [Résumé].docx', '56789012', 'AB12CD34EF56789012ABCDEF34567890'),
     ('Ópera Española (Colección).flac', '287654321', '5E6F7A8B9C0D1E2F3A4B5C6D7E8F9012'),
     ('Bücher über Geräte (édition).pdf', '15728640', 'F0E1D2C3B4A5968778695047312ABCDE'),
-    ('Guide Réseau été 2024.pdf', '20971520', 'C1D2E3F4A5B60718293A4B5C6D7E8F91'),
+    ('Guide Réseau été 2024.emulecollection', '1843', 'C1D2E3F4A5B60718293A4B5C6D7E8F91'),
 }
 
 
@@ -116,7 +116,7 @@ def test_emule_popup_closed(t):
 def test_emule_partial_selection(t):
     """SF-5.3: only the checked links are sent."""
     t.load(settings=client(t, 'emule'))
-    for name in ('example1.mp3', 'example2.avi'):
+    for name in ('example1.cbz', 'example2.avi'):
         mark_link(t, name)
         t.js("document.getElementById('__target').closest('tr').querySelector('input').checked = false;"
              "document.getElementById('__target').id = ''")
@@ -124,7 +124,7 @@ def test_emule_partial_selection(t):
     received = t.received(1)
     t.eq(len(received), 1, 'one request')
     if received:
-        expected = {e for e in EXPECTED if e[0] not in ('example1.mp3', 'example2.avi')}
+        expected = {e for e in EXPECTED if e[0] not in ('example1.cbz', 'example2.avi')}
         t.eq(links_of(param(received[0], 'c')), expected, 'the 7 checked links only')
 
 
@@ -574,7 +574,7 @@ def test_amuleapi_no_double_sending(t):
     t.pump(0.3)
     t.eq(t.js(ADD_BUTTONS), [True, True], 'both buttons disabled while waiting')
     t.keys('a')
-    mark_link(t, 'example1.mp3')
+    mark_link(t, 'example1.cbz')
     t.click('#__target')
     received = t.received(3, timeout=6)
     t.eq(len(by_path(received, 'downloads')), 1, 'one sending only')
@@ -1072,7 +1072,7 @@ def test_custom_category_change_then_click(t):
     """SF-6.8 and SF-3.3: after a category change, a click on a file name sends the new category."""
     t.load(settings=custom_settings(t, emuleCat='*Audio=1;Video=2'))
     change_category(t, '2')
-    mark_link(t, 'example1.mp3')
+    mark_link(t, 'example1.cbz')
     t.click('#__target')
     received = t.received(1)
     t.eq(len(received), 1, 'one request')
@@ -1106,3 +1106,52 @@ def test_nothing_sent_when_all_unchecked(t):
     t.eq(t.js("document.querySelectorAll('#divBody input:checked').length"), 0, 'every box unchecked')
     click_add_all(t)
     t.eq(t.received(timeout=2), [], 'no request')
+
+
+# ---- links checked by default (SF-5.7) -------------------------------------------------
+BLACKLIST = r'/^(?!.*\.emulecollection$)/i'      # the example of the help of the field
+COLLECTION = 'Guide Réseau été 2024.emulecollection'
+
+
+def test_filter_add_all(t):
+    """SF-5.3 and SF-5.7: "Add all links" sends the links checked by the filter of the settings:
+    every link but the eMule collection."""
+    t.load(settings=client(t, 'emule', checkFilter=BLACKLIST))
+    click_add_all(t)
+    received = t.received(1)
+    t.eq(len(received), 1, 'one request')
+    if received:
+        t.eq(links_of(param(received[0], 'c')), {e for e in EXPECTED if e[0] != COLLECTION}, 'the 8 checked links')
+
+
+def test_filter_popup_closed(t):
+    """SF-5.5 and SF-5.7: with the popup closed, Ctrl+Alt+A sends the links that the popup would
+    check: every link but the eMule collection."""
+    t.load(settings=client(t, 'emule', checkFilter=BLACKLIST))
+    t.keys('c')
+    t.eq(t.js("!!document.getElementById('theDiv')"), False, 'popup closed by Ctrl+Alt+C')
+    t.keys('a')
+    received = t.received(1)
+    t.eq(len(received), 1, 'one request')
+    if received:
+        t.eq(links_of(param(received[0], 'c')), {e for e in EXPECTED if e[0] != COLLECTION}, 'the 8 links, not the collection')
+
+
+def test_filter_popup_closed_nothing_checked(t):
+    """SF-5.6 and SF-5.7: with the popup closed and a filter that no file name matches, nothing is
+    sent."""
+    t.load(settings=client(t, 'emule', checkFilter='/^nothing$/'))
+    t.keys('c')
+    t.keys('a')
+    t.eq(t.received(timeout=2), [], 'no request')
+    t.check(t.traced('nothing to send'), 'trace of addButton()')
+
+
+def test_filter_edit_mode(t):
+    """SF-5.7: in edit mode the filter does not apply: the edit box sends every link."""
+    t.load(settings=client(t, 'emule', checkFilter=BLACKLIST), popup_mode=2)
+    click_add_all(t)
+    received = t.received(1)
+    t.eq(len(received), 1, 'one request')
+    if received:
+        t.eq(links_of(param(received[0], 'c')), EXPECTED, 'the 9 links, the collection included')

@@ -109,9 +109,9 @@
         </tr>
         <tr>
             <td>1</td>
-            <td><a href="ed2k://|file|example1.mp3|1048576|ABCDEF1234567890ABCDEF1234567890|/">example1.mp3</a></td>
+            <td><a href="ed2k://|file|example1.cbz|1048576|ABCDEF1234567890ABCDEF1234567890|/">example1.cbz</a></td>
             <td>1 MiB</td>
-            <td>Sample audio file</td>
+            <td>Sample comic book file — the only link checked by the whitelist example of the filter (<code>/\.(cbz|cbr|rar|zip)$/i</code>)</td>
             <td class="ok">Sent</td>
         </tr>
         <tr>
@@ -165,9 +165,9 @@
         </tr>
         <tr>
             <td>9</td>
-            <td><a href="ed2k%253A%252F%252F%257Cfile%257CGuide%2520R%25C3%25A9seau%2520%25C3%25A9t%25C3%25A9%25202024.pdf%257C20971520%257CC1D2E3F4A5B60718293A4B5C6D7E8F91%257C%252F">Guide Réseau été 2024.pdf</a></td>
-            <td>20 MiB</td>
-            <td>Scheme <strong>encoded twice</strong> (ed2k:// → ed2k%253A%252F%252F) — must be detected after two decoding passes and displayed as: Guide Réseau été 2024.pdf</td>
+            <td><a href="ed2k%253A%252F%252F%257Cfile%257CGuide%2520R%25C3%25A9seau%2520%25C3%25A9t%25C3%25A9%25202024.emulecollection%257C1843%257CC1D2E3F4A5B60718293A4B5C6D7E8F91%257C%252F">Guide Réseau été 2024.emulecollection</a></td>
+            <td>1.8 KiB</td>
+            <td>Scheme <strong>encoded twice</strong> (ed2k:// → ed2k%253A%252F%252F) — must be detected after two decoding passes and displayed as: Guide Réseau été 2024.emulecollection. An eMule collection: the only link left unchecked by the blacklist example of the filter (<code>/^(?!.*\.emulecollection$)/i</code>), tested on the decoded name</td>
             <td class="ok">Sent</td>
         </tr>
         <tr class="error">

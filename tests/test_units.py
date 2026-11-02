@@ -2,6 +2,7 @@
 
 The references in the comments (SF-x, L-x, §) point to SPECIFICATIONS.md.
 """
+import json
 
 H = 'ABCDEF1234567890ABCDEF1234567890'          # a valid MD4 hash: 32 hexadecimal characters
 
@@ -176,3 +177,53 @@ def test_humanFileSize(t):
              (734003200, '700 MiB'), (4294967296, '4 GiB'), ('1048576', '1 MiB')]
     for size, expected in cases:
         t.eq(t.call('humanFileSize', size, False, 0), expected, f'humanFileSize({size!r})')
+
+
+# the filter read, as [source, flags], or its error
+FILTER = ("(function(s){var f=parseCheckFilter(s); return f.error ? f.error : (f.re ? [f.re.source, f.re.flags] : null);})")
+
+
+def test_parseCheckFilter(t):
+    """SF-5.7 and SF-8.10: a regular expression written alone or as /expression/flags; empty, no
+    filter; the flags g and y, and what the browser can not read, refused."""
+    t.load()
+    flags_error = 'The flags g and y are not allowed: each test would depend on the previous one'
+    cases = [
+        ('', None),
+        ('   ', None),                                              # spaces only: empty
+        (r'\.cbz$', [r'\.cbz$', '']),                               # alone: case-sensitive
+        (r'/\.cbz$/', [r'\.cbz$', '']),
+        (r'/\.cbz$/i', [r'\.cbz$', 'i']),
+        (r'  /\.cbz$/i  ', [r'\.cbz$', 'i']),                       # spaces around trimmed
+        (r'/^(?!.*\.emulecollection$)/i', [r'^(?!.*\.emulecollection$)', 'i']),
+        (r'/\.(cbz|cbr|rar|zip)$/i', [r'\.(cbz|cbr|rar|zip)$', 'i']),
+        (r'/a/b/', ['a\\/b', '']),                                  # a slash inside
+        ('/abc', ['\\/abc', '']),                                   # no final slash: the slash is a character
+        (r'/\.cbz$/g', flags_error),
+        (r'/\.cbz$/gi', flags_error),
+        (r'/\.cbz$/y', flags_error),
+    ]
+    for text, expected in cases:
+        t.eq(t.js(f'{FILTER}({json.dumps(text)})'), expected, f'parseCheckFilter({text!r})')
+    for text in (r'/\.(cbz|cbr$/i', '(', r'/\.cbz$/q'):
+        result = t.js(f'{FILTER}({json.dumps(text)})')
+        t.check(isinstance(result, str) and result.startswith('Not a valid regular expression: ') and len(result) > 33,
+                f'parseCheckFilter({text!r}): refused, with the reason of the browser', result)
+
+
+def test_checkedByDefault(t):
+    """SF-5.7: the examples of the help on the names of test_sample.html; no filter, every link."""
+    t.load()
+    names = ['example1.cbz', 'example2.avi', 'Bücher über Geräte (édition).pdf', 'Guide Réseau été 2024.EmuleCollection',
+             'a.emulecollection', 'b.CBR', 'c.zip.txt']
+    cases = [
+        ('', [True] * 7),
+        (r'/^(?!.*\.emulecollection$)/i', [True, True, True, False, False, True, True]),
+        (r'^(?!.*\.emulecollection$)', [True, True, True, True, False, True, True]),        # case-sensitive
+        (r'/\.(cbz|cbr|rar|zip)$/i', [True, False, False, False, False, True, False]),
+        (r'/(/', [True] * 7),                                                                # can not be read: ignored
+    ]
+    for text, expected in cases:
+        t.eq(t.js(f"(function(n){{var f=parseCheckFilter({json.dumps(text)}); checkRegExp=f.error ? null : f.re;"
+                  f"return n.map(function (x) {{ return checkedByDefault(x); }});}})({json.dumps(names)})"),
+             expected, f'checkedByDefault() with {text!r}')
