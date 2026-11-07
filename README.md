@@ -4,7 +4,7 @@
 
 **GM_EmuleLinker** is a [Tampermonkey](https://tampermonkey.net/) script that adds all the [ed2k](https://en.wikipedia.org/wiki/EDonkey2000) links of a page, in one click, to [eMule](https://www.emule-project.com), [aMule](https://www.amule.org/), [MLDonkey](https://github.com/ygrek/mldonkey), or any application installed on your system that handles ed2k links.
 
-It parses the current page and displays all the ed2k links found in a popup box, in the top left corner of the page.
+It parses the current page and displays all the ed2k links found in a popup box, in a corner of the window (the top left one by default).
 
 ![Main screen](screenshots/screenshot_main.png)
 
@@ -39,9 +39,9 @@ The changes of each version are listed in [CHANGELOG.md](CHANGELOG.md).
 
    To try the script, download the [test sample page](https://raw.githubusercontent.com/alo0/GM_EmuleLinker/master/test_sample.html) (Save As) and open it from your disk. On Chrome, Tampermonkey runs on local files only with the **Allow access to file URLs** toggle of its details page.
 
-   Later, the **Settings** button of the popup, or `Ctrl+Alt+S`, opens the dialog again. The **Show help** button, at the top right, shows the explanation under every field; while they are hidden, the explanation of a field appears as a tooltip when the mouse stays over it; only the fields that the method of a server uses are shown under it. A wrong value is shown in red under its field, and nothing is saved until it is corrected. **Reset to defaults** sets every field back to its default value and marks the fields it changed, without saving them: **Undo** brings the previous values back. **Escape** closes the dialog without saving.
+   Later, the **Settings** button of the popup (⚙), or `Ctrl+Alt+S`, opens the dialog again. The **?** button, at the top right, shows the explanation under every field (the ✕ next to it closes the dialog); while they are hidden, the explanation of a field appears as a tooltip when the mouse stays over it; only the fields that the method of a server uses are shown under it. A wrong value is shown in red under its field, and nothing is saved until it is corrected. **Reset to defaults** sets every field back to its default value and marks the fields it changed, without saving them: **Undo** brings the previous values back. **Escape** closes the dialog without saving.
 
-5. Set your configuration. The **Servers** section lists Local and your servers: check the one that receives the links. **+ Add a server** adds one: give it a name, choose its **Ed2k Download Method**, then its settings. Each server keeps its own settings, several servers of the same kind included (two aMule for instance): **Edit** shows those of a server without checking it, **Delete** removes it (with Undo). The methods:
+5. Set your configuration. The **Servers** section lists Local and your servers: check the one that receives the links. **+ Add a server** adds one: give it a name, choose its **Ed2k Download Method**, then its settings. Each server keeps its own settings, several servers of the same kind included (two aMule for instance): **Edit** shows those of a server without checking it, **Delete** removes it (with Undo). **Disable**, on the row of Local, leaves it out when your system has no ed2k application (**Enable** offers it again). The methods:
    - **Local (your system default)** uses the application installed on your computer that handles ed2k links by default
    - **eMule (web)** sends the links to the web server of eMule, local or remote
    - **aMule 3.x (amuleapi)** sends the links to aMule 3.1 or later, local or remote, through its REST API
@@ -69,26 +69,36 @@ The changes of each version are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## Usage
 
-The popup lists the files of the page, with their size, each with a checkbox.
+The popup lists the files of the page, with their size, each with a checkbox, between two toolbars. The tooltip of each button tells what it does and its keyboard shortcut.
 
-- **Add all links** sends the checked links. Clicking a file name sends this link only.
-- The box of the top or the bottom toolbar checks or unchecks every link.
+- **Download** sends the checked links. Clicking a file name sends this link only.
+- The box of the top or the bottom toolbar checks or unchecks every link. Next to it, the counter tells how many links Download sends, out of the links of the page.
+- At the right of the top toolbar: **Settings** (⚙) opens the settings dialog, **Help** (?) shows a short help next to the popup (drag its title bar to move it), **Minimize** (▲) keeps only the top toolbar, **Maximize** (▼) shows the whole popup again, and **Close** (✕) closes it.
+- The popup is at the top left of the window by default. **Popup position**, in the Popup section of the settings, puts it in another corner, and **Popup scrolling** chooses whether it stays in view when the page scrolls (at the bottom of the window, it always does). It can be resized at the top left only; at the bottom, ▼ minimizes it and ▲ maximizes it.
+- When the list does not fit in the popup, a light shadow on its top or bottom edge tells that there are more links beyond it.
 - Every link is checked by default. To leave some of them unchecked, write a regular expression on the file name in **Links checked by default**, in the Popup section of the settings: the links whose name matches it are checked, the others are listed in gray, unchecked. For instance `/^(?!.*\.emulecollection$)/i` checks every file but the eMule collections, and `/\.(cbz|cbr|rar|zip)$/i` only the `.cbz`, `.cbr`, `.rar` and `.zip` files (`/i` ignores the case). With the popup closed, these links only are sent.
-- The drop-down list chooses the category of the downloads (eMule and aMule). The choice applies to the current page only: each new page starts on the default category of the settings.
+- With at least one server set in the settings, a first drop-down list chooses the server that receives the links: **Local**, then your servers. The choice applies to the current page only: each new page starts on the server checked in the settings. To hide the list, uncheck **Show the server list** in the Popup section of the settings.
+- The next drop-down list chooses the category of the downloads (eMule and aMule), among the ones of the server chosen. The choice applies to the current page only: each new page starts on the default category of the settings. The list is grayed out when there is only one category; a long name is cut, and shown whole in the tooltip. To hide the list, uncheck **Show the category list** in the Popup section of the settings: the links are then sent to the default category.
 - **Edit mode** replaces the list by a text box holding the links, which you can edit: its content is what is sent. **Normal mode** goes back to the list.
-- A popup closed on a page stays closed on the next pages, until you open it again. The links can still be sent while it is closed.
-- With **eMule (web)** and **aMule**, the popup shows "Please wait..." under its top toolbar while the client answers, the **Add all links** buttons being disabled meanwhile, then its answer: the number of links added, or what went wrong (password refused, client unreachable...). With the popup closed, only an error is shown, in an alert.
+- The script speaks English or French: **Language**, in the General section of the settings, follows the language of the browser by default.
+- Closing the popup, or switching it to edit mode, applies to the current page only: each page opens the popup in the **Default popup view** chosen in the General section of the settings, **Maximized** (the list of the links), **Minimized** (its top toolbar only) or **Closed**. With Closed, the popup and the settings dialog open only through the keyboard shortcuts below or the Tampermonkey menu. The links can still be sent while the popup is closed.
+- When you close the popup (✕, `Ctrl+Alt+C` or the menu), a message in the middle of the window tells how to open it again, and how to keep it closed on every page. Check **Don't display again** to hide it for good; **Show a message when the popup is closed**, in the General section of the settings, shows it again.
+- With **eMule (web)** and **aMule**, the popup shows "Please wait..." under its top toolbar while the client answers, the **Download** buttons being disabled meanwhile, then its answer, in a band over the top of the list: the number of links added, or what went wrong (password refused, client unreachable...). The band of links added goes away after a few seconds, an error stays until you close it (✕). With the popup closed, the band is shown alone, in the corner of the popup.
 
 All the commands are also available in the Tampermonkey menu, under **Emule Linker**, and through keyboard shortcuts:
 
 | Shortcut | Action |
 |---|---|
-| `Ctrl+Alt+A` | Add the links (all the links of the page when the popup is closed) |
+| `Ctrl+Alt+D` | Download the checked links (the links checked by default when the popup is closed) |
+| `Ctrl+Alt+A` | Check or uncheck all the links |
 | `Ctrl+Alt+M` | Switch between normal mode and edit mode |
-| `Ctrl+Alt+O` | Open the popup |
-| `Ctrl+Alt+C` | Close the popup |
-| `Ctrl+Alt+X` | Open or close the popup |
+| `Ctrl+Alt+X` | Switch the view: maximized, minimized, closed |
+| `Ctrl+Alt+O` | Open the popup, or maximize it |
+| `Ctrl+Alt+C` | Close the popup, with a message telling how to open it again |
 | `Ctrl+Alt+S` | Open the settings dialog |
+| `Ctrl+Alt+H` | Show or hide the help |
+
+Up to version 0.13, `Ctrl+Alt+A` added the links: it is now `Ctrl+Alt+D`.
 
 ## Support
 

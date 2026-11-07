@@ -128,7 +128,7 @@ def test_live_amule(t):
         t.load('__live', settings={'ed2kDlMethod': 'amuleapi', 'emuleUrl': amule_url(),
                                    'emulePwd': password(), 'emuleCat': '*default=0;'})
         t.eq(t.js('eLinks.length'), 3, 'the 3 test links detected')
-        t.keys('a')
+        t.keys('d')
         t.check(wait_until(lambda: all(h in api.downloads() for h in hashes), 20),
                 'the 3 files appear in the aMule transfer list')
         listing = api.downloads()

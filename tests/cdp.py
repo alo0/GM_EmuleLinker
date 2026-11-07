@@ -156,6 +156,15 @@ class CDP:
         self.call('Input.dispatchMouseEvent', dict(base, type='mousePressed'))
         self.call('Input.dispatchMouseEvent', dict(base, type='mouseReleased'))
 
+    def drag(self, x, y, x2, y2, steps=5):
+        """A real drag with the mouse, from a point to another one, in a few moves."""
+        self.call('Input.dispatchMouseEvent', {'type': 'mouseMoved', 'x': x, 'y': y})
+        self.call('Input.dispatchMouseEvent', {'type': 'mousePressed', 'x': x, 'y': y, 'button': 'left', 'buttons': 1, 'clickCount': 1})
+        for i in range(1, steps + 1):
+            self.call('Input.dispatchMouseEvent', {'type': 'mouseMoved', 'x': x + (x2 - x) * i / steps,
+                                                   'y': y + (y2 - y) * i / steps, 'button': 'left', 'buttons': 1})
+        self.call('Input.dispatchMouseEvent', {'type': 'mouseReleased', 'x': x2, 'y': y2, 'button': 'left', 'buttons': 0, 'clickCount': 1})
+
     def ctrl_alt(self, letter):
         """A real keyboard shortcut: a trusted event, as if typed by the user."""
         base = {'modifiers': 3, 'windowsVirtualKeyCode': ord(letter.upper()),

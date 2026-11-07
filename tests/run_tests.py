@@ -680,11 +680,20 @@ class T:
         self.driver.navigate(self.base + path)
         self.driver.pump(0.2)
 
-    def load(self, page='test_sample.html', settings=None, emule_config=1, popup_mode=1, debug=1):
+    def load(self, page='test_sample.html', settings=None, emule_config=1, popup_mode=1, debug=1, servers=None,
+             language='en-US'):
         """Open a page with a fresh storage. settings: the GM_config values to store
-        (None: nothing stored, the script defaults apply). emule_config=None simulates
+        (None: nothing stored, the script defaults apply). servers: the list of the servers
+        stored by the settings dialog, {active, list} (None: nothing stored). language: the language of
+        the browser seen by the script (navigator.language), English whatever the system, so that the
+        texts of the tests are the English ones (I-7). emule_config=None simulates
         the very first run of the script. debug: the debug traces are on by default, as
-        many checks read them; None leaves the setting unstored, as on a new installation."""
+        many checks read them; None leaves the setting unstored, as on a new installation.
+        popup_mode: the state of the popup once the page is loaded, which the script no longer
+        stores (SF-10): 0 closed (the default view Closed added to the settings), 1 normal,
+        2 edit mode (Ctrl+Alt+M pressed after the load)."""
+        if popup_mode == 0:
+            settings = dict(settings or {}, popupView='closed')
         self.browser.close_other_tabs()
         Handler.received.clear()
         Handler.amuleapi = dict(AMULEAPI)
@@ -693,15 +702,19 @@ class T:
         Handler.mldonkey = copy.deepcopy(MLDONKEY_FAKE)
         Handler.cookies.clear()
         self._navigate('/__blank')
-        seed = {'emule_config': emule_config, 'popup_mode': popup_mode, 'debug_mode': debug,
-                'GM_config': None if settings is None else json.dumps(settings)}
+        seed = {'emule_config': emule_config, 'debug_mode': debug,
+                'GM_config': None if settings is None else json.dumps(settings),
+                'servers': None if servers is None else json.dumps(servers)}
         self.driver.js('localStorage.clear();' + ''.join(
             f'localStorage.setItem({json.dumps("gm:" + k)}, {json.dumps(json.dumps(v))});'
-            for k, v in seed.items() if v is not None))
+            for k, v in seed.items() if v is not None)
+            + f'localStorage.setItem("test:language", {json.dumps(language)});')
         self.driver.dialogs.clear()
         self.driver.console.clear()
         self.driver.errors.clear()
         self._navigate('/' + page.lstrip('/'))
+        if popup_mode == 2:
+            self.keys('m')
 
     def reload(self):
         self.driver.reload()
@@ -755,6 +768,15 @@ class T:
             "e.scrollIntoView({block:'center'});var b=e.getBoundingClientRect();"
             "return [b.left+b.width/2, b.top+b.height/2];})()")
         self.driver.click(x, y)
+        self.driver.pump(0.2)
+
+    def drag(self, selector, dx, dy):
+        """A real drag with the mouse, from the middle of the element, by dx and dy pixels, the
+        mouse staying in the window (WebDriver BiDi refuses a move out of it)."""
+        x, y, width, height = self.driver.js(
+            f"(function(){{var b=document.querySelector({json.dumps(selector)}).getBoundingClientRect();"
+            "return [b.left+b.width/2, b.top+b.height/2, innerWidth, innerHeight];})()")
+        self.driver.drag(x, y, min(max(x + dx, 1), width - 2), min(max(y + dy, 1), height - 2))
         self.driver.pump(0.2)
 
     # -- what the fake ed2k clients received (see Handler)
@@ -892,9 +914,13 @@ def bootstrap_source():
         shim = f.read()
     with open(os.path.join(ROOT, 'GM_EmuleLinker.user.js'), encoding='utf-8') as f:
         script = f.read()
-    # GM_info, as Tampermonkey gives it: the name and the version read in the header of the script
+    # GM_info, as Tampermonkey gives it: the name and the version read in the header of the script,
+    # and the name of the userscript manager
     info = {key: re.search(r'^// @' + key + r'\s+(.+?)\s*$', script, re.M).group(1) for key in ('name', 'version')}
-    shim = f'var GM_info = {{script: {json.dumps(info)}}};\n' + shim
+    shim = f'var GM_info = {{script: {json.dumps(info)}, scriptHandler: "Tampermonkey"}};\n' + shim
+    # the language of the browser seen by the script: the one asked by the test (T.load()), English by default
+    shim = ("Object.defineProperty(navigator, 'language', {configurable: true, get: function () {"
+            " return localStorage.getItem('test:language') || 'en-US'; }});\n") + shim
     return BOOTSTRAP.replace('__SHIM__', json.dumps(shim)).replace('__SCRIPT__', json.dumps(script))
 
 

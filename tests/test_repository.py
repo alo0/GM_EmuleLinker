@@ -147,6 +147,44 @@ def test_repository_address(t):
     t.eq(found.group(1), 'https://github.com/' + owner_repo, 'the repository of @updateURL')
 
 
+def blocks(text):
+    """The header (its comments), the PARAM, LIB and CODE blocks of the script."""
+    param = text.index('\n// \t\t\t\t\t\t\t\tPARAM')
+    lib = text.index('\n// \t\t\t\t\t\t\t\tLIB')
+    code = text.index('\n// \t\t\t\t\t\t\t\tCODE')
+    return text[:param], text[param:lib], text[lib:code], text[code:]
+
+
+def test_code_layout(t):
+    """§ 3.1: the order of the script, for a human reader. The PARAM block holds the default values,
+    then the look: the CSS of the popup and of the settings dialog, and the icons of the popup (the
+    themes, I-8, and the languages, I-7, will join them); the CODE block, none of them. The CODE
+    block is in titled parts, the generic utilities last, as listed by the index at the end of the
+    comments of the header."""
+    text = read(SCRIPT).replace('\r\n', '\n')
+    header, param, lib, code = blocks(text)
+    for name in ('POPUP_CSS', 'MESSAGE_CSS', 'HELP_CSS', 'STATUS_CSS', 'SETTINGS_CSS', 'ICONS'):
+        found = re.search(r'(?m)^var ' + name + ' = ', param)
+        t.check(found and found.start() > param.index('var editRow'), f'{name}: in the PARAM block, after the default values')
+        t.check(not re.search(r'(?m)^var ' + name + ' = ', code), f'{name}: not in the CODE block')
+    t.check('<style>' not in code.replace("'<style>' + POPUP_CSS + '</style>'", '').replace("'<style>' + MESSAGE_CSS + '</style>'", '')
+                           .replace("'<style>' + HELP_CSS + '</style>'", ''),
+            'no CSS written in the CODE block')
+    t.check('div#theDiv .toolbar' not in code and '#GM_config .config_header' not in code, 'no rule of CSS in the CODE block')
+    index = re.search(r'(?ms)^// CONTENTS:.*?\n// -{20,}', header)
+    t.check(index, 'an index at the end of the comments of the header')
+    if not index:
+        return
+    listed = re.findall(r'(?m)^//\s+(?:CODE\s+)?([A-Z][a-z]+)\s{2,}', index.group(0))
+    parts = re.findall(r'(?m)^// -{20,}\n// ([A-Z][a-z]+): ', code)
+    t.eq(listed, parts, 'the index lists the parts of the CODE block, in their order')
+    t.eq(parts[-1:], ['Utilities'], 'the utilities last')
+    last = code[code.rindex('// Utilities: '):]
+    for name in ('trace', 'gmRequest', 'basicAuth', 'humanFileSize', 'post'):
+        t.check(re.search(r'(?m)^(async )?function ' + name + r'\(', last), f'{name}: among the utilities')
+    t.check('Ctrl+Alt+A to send' not in header, 'the header tells the shortcut of Download (Ctrl+Alt+D since 0.14)')
+
+
 def test_update_urls(t):
     """§ 3.2: the script updates itself from its own address on GitHub."""
     for key in ('updateURL', 'downloadURL'):

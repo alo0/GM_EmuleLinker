@@ -111,27 +111,27 @@ def open_dialog(t, **changes):
 
 
 def spec(t, cdp):
-    # the popup in normal mode, with the answer of aMule (legend: SF-2 in SPECIFICATIONS.md)
-    t.load(settings=SPEC_SETTINGS, debug=0)
+    # the popup in normal mode, with the two servers and the answer of aMule (legend: SF-2 in SPECIFICATIONS.md);
+    # the band of the answer covers the first rows of the list: the markers of a row are on the next ones
+    t.load(settings=SPEC_SETTINGS, servers=SPEC_SERVERS, debug=0)
     t.js("var p = document.getElementById('theDiv'); p.style.marginTop = '34px'; p.style.marginLeft = '34px';")
-    t.js("showStatus('8 link(s) added to aMule', true)")
+    t.js("STATUS_DELAY = 600000; showStatus('8 link(s) added to aMule', true)")
     t.js(MARKERS)
     t.js('hidePage(true)')
     t.js("""(function () {
-      var bars = document.querySelectorAll('#theDiv .toolbar'), top = bars[0], bottom = bars[bars.length - 1];
-      var b = top.querySelectorAll('button'), rows = document.querySelectorAll('#theDiv table tr');
-      var cells = rows[1].querySelectorAll('td');
-      mark('#checkall', 1, 'top'); mark(b[0], 2, 'top'); mark(b[1], 3, 'top'); mark('#cat', 4, 'top');
-      mark(b[2], 5, 'top'); mark(b[3], 6, 'top'); mark('#emlStatus', 7, 'left');
-      mark(rows[0].querySelector('input'), 8, 'left'); mark(rows[1].querySelector('a'), 9, 'right');
-      mark(cells[cells.length - 1], 10, 'left'); mark(bottom.querySelector('input'), 11, 'left');
-      mark(document.querySelector('#theDiv tr.filtered a'), 12, 'right');
+      var rows = document.querySelectorAll('#theDiv table tr'), cells = rows[3].querySelectorAll('td');
+      mark('#checkall', 1, 'left'); mark('#emlTop .emlCount', 2, 'top'); mark('#srv', 3, 'top');
+      mark('#emlTop .emlAdd', 4, 'top'); mark('#emlTop [data-icon=settings]', 5, 'top'); mark('#emlMin', 6, 'top');
+      mark('#emlClose', 7, 'top'); mark('#emlStatus', 8, 'left');
+      mark(rows[2].querySelector('input'), 9, 'left'); mark(rows[3].querySelector('a'), 10, 'right');
+      mark(cells[cells.length - 1], 11, 'left'); mark('#checkall2', 12, 'left');
+      mark(document.querySelector('#theDiv tr.filtered a'), 13, 'right');
     })()""")
     cdp.pump(0.3)
     save(cdp, os.path.join(SPEC, 'popup.png'), union(box(t, '#theDiv', 34), {'x': 0, 'y': 0, 'width': 1, 'height': 1}))
 
     # the popup in edit mode (SF-4)
-    t.load(settings=SPEC_SETTINGS, popup_mode=2, debug=0)
+    t.load(settings=SPEC_SETTINGS, servers=SPEC_SERVERS, popup_mode=2, debug=0)
     t.js(MARKERS)
     t.js('hidePage(true)')
     cdp.pump(0.3)
@@ -145,7 +145,7 @@ def spec(t, cdp):
       mark('#GM_config_server_srv2 .acts', 5, 'right'); mark('#GM_config_server_fields', 6, 'left');
       mark('#GM_config_emulePwd_var .reveal', 7, 'left'); mark('#GM_config_testBtn', 8, 'right');
       mark('#GM_config_importBtn', 9, 'right'); mark('#GM_config_addServer', 10, 'right');
-      mark('#GM_config_popupPos_var', 11, 'left'); mark('#GM_config_editCol_var', 12, 'left');
+      mark('#GM_config_popupCorner_var', 11, 'left'); mark('#GM_config_editCol_var', 12, 'left');
       mark('#GM_config_resetBtn', 13, 'left'); mark('#GM_config_saveBtn', 14, 'top');
       mark('#GM_config_issuesLink', 15, 'left'); mark('#GM_config_repoLink', 16, 'right');
     })()""")

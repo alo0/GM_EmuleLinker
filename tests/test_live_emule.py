@@ -103,7 +103,7 @@ def test_live_emule(t):
         t.load('__live', settings={'ed2kDlMethod': 'emule', 'emuleUrl': emule_url(),
                                    'emulePwd': password, 'emuleCat': '*default=0;'})
         t.eq(t.js('eLinks.length'), 3, 'the 3 test links detected')
-        t.keys('a')
+        t.keys('d')
         t.check(wait_until(lambda: all(name in web.transfers() for name, _ in files), 20),
                 'the 3 files appear in the eMule transfer list')
         listing = web.transfers()

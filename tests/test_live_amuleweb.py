@@ -110,7 +110,7 @@ def test_live_amuleweb(t):
         t.load('__live', settings={'ed2kDlMethod': 'amule', 'emuleUrl': amuleweb_url(),
                                    'emulePwd': password(), 'emuleCat': '*all=all'})
         t.eq(t.js('eLinks.length'), 3, 'the 3 test links detected')
-        t.keys('a')
+        t.keys('d')
         t.check(wait_until(lambda: all(h in web.downloads() for h in hashes), 20), 'the 3 files in the downloads of aMule')
         listing = web.downloads()
         for name, _ in files:
@@ -141,7 +141,7 @@ def test_live_amuleweb_accented_category(t):
     try:
         t.load('__live', settings={'ed2kDlMethod': 'amule', 'emuleUrl': amuleweb_url(), 'emulePwd': password(),
                                    'emuleCat': f'*{accented[0]}={accented[0]}'})
-        t.keys('a')
+        t.keys('d')
         t.check(wait_until(lambda: file_hash in web.downloads(), 20), 'the file in the downloads of aMule')
         t.check(web.in_category(file_hash, accented[0]), 'in the accented category')
     finally:
@@ -165,7 +165,7 @@ def test_live_amuleweb_category_with_equal_or_semicolon(t):
         try:
             t.load('__live', settings={'ed2kDlMethod': 'amule', 'emuleUrl': amuleweb_url(), 'emulePwd': password(),
                                        'emuleCat': f"*{shown}={category.replace(';', chr(92) + ';')}"})
-            t.keys('a')
+            t.keys('d')
             t.check(wait_until(lambda: file_hash in web.downloads(), 20), 'the file in the downloads of aMule')
             t.check(web.in_category(file_hash, category), 'in the category whose name holds an = or a ;')
         finally:

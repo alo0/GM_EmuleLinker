@@ -55,6 +55,14 @@ class BiDi(CDP):
             {'type': 'pointerMove', 'x': int(round(x)), 'y': int(round(y))},
             {'type': 'pointerDown', 'button': 0}, {'type': 'pointerUp', 'button': 0}]})
 
+    def drag(self, x, y, x2, y2, steps=5):
+        """A real drag with the mouse, from a point to another one, in a few moves."""
+        moves = [{'type': 'pointerMove', 'x': int(round(x + (x2 - x) * i / steps)), 'y': int(round(y + (y2 - y) * i / steps))}
+                 for i in range(1, steps + 1)]
+        self._actions({'type': 'pointer', 'id': 'mouse', 'parameters': {'pointerType': 'mouse'}, 'actions': [
+            {'type': 'pointerMove', 'x': int(round(x)), 'y': int(round(y))}, {'type': 'pointerDown', 'button': 0}]
+            + moves + [{'type': 'pointerUp', 'button': 0}]})
+
     def _keys(self, values):
         down = [{'type': 'keyDown', 'value': v} for v in values]
         up = [{'type': 'keyUp', 'value': v} for v in reversed(values)]

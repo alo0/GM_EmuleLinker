@@ -108,7 +108,7 @@ def test_live_mldonkey(t):
         t.load('__live', settings={'ed2kDlMethod': 'mldonkey', 'emuleUrl': mldonkey_url(), 'emuleUser': user(),
                                    'emulePwd': password(), 'emuleCat': '*default=0;'})
         t.eq(t.js('eLinks.length'), 3, 'the 3 test links detected')
-        t.keys('a')
+        t.keys('d')
         t.check(wait_until(lambda: all(n in web.downloads() for n in names), 20),
                 'the 3 files in the downloads of MLDonkey, their names intact')
         t.check(wait_until(lambda: t.js("(document.getElementById('emlStatus') || {}).textContent") == '3 link(s) added to MLDonkey', 15),

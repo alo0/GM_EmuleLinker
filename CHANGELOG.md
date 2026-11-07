@@ -9,6 +9,58 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Up to 0.7, the script was published on userscripts.org (script 154608). It moved to GitHub in 2014.
 
+## [0.14] - 2026-11-07
+
+### Added
+
+- Popup: a **server list** in both toolbars, before the category list, to send the links of the page to another server without opening the settings: Local, then the servers of the settings, in their order. It is shown when it offers two choices at least, Local included. The server chosen applies to the current page only, with its own settings, and the category list offers its categories.
+- Popup: a **Help** button (?), `Ctrl+Alt+H` and the menu entry "Help" show a short help built into the script: each control of the toolbars with its shortcut, the list of the links, the next pages, and links to the documentation and to the issues on GitHub. It opens beside the popup, which stays usable, and can be moved by its title bar.
+- **French** (I-7): the popup, its messages, the help, the settings dialog, the alerts and the menu, in English or in French. The setting **Language**, first in the General section, follows the language of the browser by default.
+- Popup: the **minimized view**, only the top toolbar, at the same width, the checked links and the edit box kept; the Minimize (▲) and Maximize (▼) button; `Ctrl+Alt+X` and the menu entry "Switch view" go from maximized to minimized, then closed, then maximized again.
+- Popup: a **counter** in both toolbars, the links that Download sends out of the links of the page (in edit mode, the links of the text).
+- Popup: closing it (✕, `Ctrl+Alt+C` or the menu) shows a **message** inside the page, telling how to open it again, and how to keep it closed on every page (the default view Closed, or the script restricted to some sites, with a link to the installation guide); **Don't display again** hides it for good.
+- Popup: `Ctrl+Alt+A` and the menu entry "Check or uncheck all links" check or uncheck every link, as the box of the toolbars.
+- Popup: a light shadow on the top or bottom edge of the list tells that links are hidden beyond it, whatever the scrollbar (Firefox shows it only under the mouse).
+- Settings dialog: the new **General** section, first, with the **Default popup view**: Maximized (default), Minimized or Closed, the view in which each page with ed2k links opens the popup. Its help tells that, with Closed, the popup and the settings dialog open only through the keyboard shortcuts or the menu of Tampermonkey or Violentmonkey.
+- Settings dialog, Popup section: **Popup position**, the corner of the window where the popup is shown (top left by default, top right, bottom left, bottom right), and **Popup scrolling**, Stays in view (default) or Scrolls with the page, in place of Popup Position; at the bottom of the window, the popup always stays in view. The former setting is taken over: absolute is Scrolls with the page, fixed is Stays in view.
+- Settings dialog: **Disable**, on the row of Local, leaves Local out of the servers that receive the links, for a system without an ed2k application (I-14); **Enable** offers it again. Not while Local is checked; deleting the last server enables it again.
+- Settings dialog, Popup section: **Show the server list**, checked by default; unchecked, the toolbars have no server list.
+- Settings dialog, Popup section: **Show the category list**, checked by default; unchecked, the toolbars have no category list, and the links are sent to the default category.
+- Settings dialog, General section: **Show a message when the popup is closed**, checked by default, to show the message again after "Don't display again".
+- Settings dialog: a Close icon (✕) at the right of the title.
+
+### Changed
+
+- Popup: new toolbars. At the top: the box, the counter, the server and the category, **Download**, then Settings (⚙), Help (?), Minimize (▲) and Close (✕) as icons, drawn so that they are centered whatever the fonts; at the bottom: the box, the counter, Edit mode, the server, the category and Download. Each tooltip tells the shortcut.
+- Popup: **Add all links** is renamed **Download**, and its shortcut is now `Ctrl+Alt+D` (`Ctrl+Alt+A` up to 0.13, now checking or unchecking every link). Download stands out: white, with a blue border.
+- Popup: closing it, or switching it to edit mode, applies to the current page only: the next page opens it in the default view of the settings, where a closed popup used to stay closed on every page. To keep it closed everywhere, choose Closed as the default view.
+- Popup: the answer of eMule, aMule or MLDonkey is shown in a colored band over the top of the list, the popup keeping its size; a success goes away after 8 s, an error stays until closed. Links left out by aMule 3.x or MLDonkey (invalid, or already in the list) are a warning, in orange, no longer an error in red: the client received the links. With the popup closed, the band is shown in the corner of the popup, instead of an alert, a success included.
+- Popup: larger and evenly spaced toolbars (22 px buttons and lists, 12 px text, 13 px checkboxes), on a light blue background, and 17 px rows. The popup sets these sizes itself: the styles of a page (a forum giving its buttons a large padding, or its text a small line height) no longer change them.
+- Popup: the buttons and lists of the toolbars are white, whatever the page and the browser.
+- Popup: the checkboxes in one column, the file names aligned on the counters, the sizes aligned to the right, on the right edge of the toolbars.
+- Popup: the list is framed by two lines that no longer scroll with it, from one side of the popup to the other.
+- Popup: the category list is grayed out when there is only one category, between 100 and 140 px wide (`categoryListMinWidth`, `categoryListMaxWidth`, in the PARAM block): the short categories of another server move nothing, a long name is cut, and shown whole in the tooltip.
+- Popup: it can be resized at the top left of the window only; at the bottom, Minimize is ▼ and Maximize ▲, as the popup folds down.
+- Settings dialog: its title on the light blue of the toolbars of the popup; the button of the inline help is an icon (?), pressed while the helps are shown; Save stands out, as Download.
+- Alerts of the settings stored by an older version (no valid category, popup too small): reworded.
+- Menu of Tampermonkey: the access key of "Toggle debug traces" is now `t` (`d` is the one of Download).
+- Security: the servers of the settings are read only on a page with ed2k links, and the settings of a server other than the checked one (its password included) only when it is chosen in the popup.
+- Documentation (`SPECIFICATIONS.md`, chapter 6): I-1, done in 0.13, removed; the help (I-5) will be built into the script, as GitHub refuses to be shown in an inline frame.
+- Code: the script is reorganized, without any change of behavior: the CSS of the popup and of the settings dialog, and the icons, are in the PARAM block, with the default values, for the themes to come; the CODE block is in titled parts (state, startup, detection, popup, selection, sending, settings), the utilities last; an index at the top of the script gives this order.
+- Code: every text shown to the user is in the PARAM block, one table per language, read by `tr()`.
+- Tests: the state of the popup when a page is loaded is set by the default view of the settings, or by `Ctrl+Alt+M`, as it is no longer stored.
+- Tests: the toolbars (controls, sizes on a page with the styles of a forum, alignments, icons, counter, views, lines and shadows of the list, category lists); the sending tests use `Ctrl+Alt+D`.
+- Tests: the layout of the script (the look in the PARAM block, the parts of the CODE block in the order of the index).
+- Tests: the server list (shown, order, place, width, the server chosen and its categories, the sending to it, nothing stored, its setting); servers stored for a test (`load(servers=…)`).
+- Tests: the message shown when the popup is closed (the ways of closing, centered on a backdrop, OK, its Close button, Escape, Don't display again, its setting); the fake `GM_info` gives the name of the userscript manager.
+- Tests: the help (its button, its content, its place, moved with the mouse: a new `drag` of the test tools, with Chrome and Firefox); the header of the settings dialog and Save; Local disabled; the corner and the scrolling of the popup, their migration, the arrows at the bottom.
+- Tests: the languages (the setting, the French texts, the language chosen, the tables complete); the test tools give the script the language of the browser that a test asks for, English by default.
+- Tests: the band of the answers in every view, and the popup closed; the colors of the controls on a page that gives its own.
+
+### Fixed
+
+- Settings dialog: **Reset to defaults** sets a checkbox back to its default value, and highlights it.
+
 ## [0.13] - 2026-11-04
 
 ### Added
@@ -228,6 +280,7 @@ Up to 0.7, the script was published on userscripts.org (script 154608). It moved
 
 - First version.
 
+[0.14]: https://github.com/alo0/GM_EmuleLinker/compare/v0.13...v0.14
 [0.13]: https://github.com/alo0/GM_EmuleLinker/compare/v0.12...v0.13
 [0.12]: https://github.com/alo0/GM_EmuleLinker/compare/v0.11...v0.12
 [0.11]: https://github.com/alo0/GM_EmuleLinker/compare/v0.10...v0.11
