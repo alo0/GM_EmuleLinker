@@ -156,6 +156,14 @@ class CDP:
         self.call('Input.dispatchMouseEvent', dict(base, type='mousePressed'))
         self.call('Input.dispatchMouseEvent', dict(base, type='mouseReleased'))
 
+    def mouse(self, x, y, button=None):
+        """The mouse moved to a point, and its button pressed there (button='down') or released (button='up')."""
+        held = button == 'up'   # the button held during the move, until released
+        self.call('Input.dispatchMouseEvent', {'type': 'mouseMoved', 'x': x, 'y': y, 'button': 'left' if held else 'none', 'buttons': int(held)})
+        if button:
+            self.call('Input.dispatchMouseEvent', {'type': 'mousePressed' if button == 'down' else 'mouseReleased', 'x': x, 'y': y,
+                                                   'button': 'left', 'buttons': int(button == 'down'), 'clickCount': 1})
+
     def drag(self, x, y, x2, y2, steps=5):
         """A real drag with the mouse, from a point to another one, in a few moves."""
         self.call('Input.dispatchMouseEvent', {'type': 'mouseMoved', 'x': x, 'y': y})

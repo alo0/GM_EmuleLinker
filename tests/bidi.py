@@ -55,6 +55,13 @@ class BiDi(CDP):
             {'type': 'pointerMove', 'x': int(round(x)), 'y': int(round(y))},
             {'type': 'pointerDown', 'button': 0}, {'type': 'pointerUp', 'button': 0}]})
 
+    def mouse(self, x, y, button=None):
+        """The mouse moved to a point, and its button pressed there (button='down') or released (button='up')."""
+        actions = [{'type': 'pointerMove', 'x': int(round(x)), 'y': int(round(y))}]
+        if button:
+            actions.append({'type': 'pointerDown' if button == 'down' else 'pointerUp', 'button': 0})
+        self._actions({'type': 'pointer', 'id': 'mouse', 'parameters': {'pointerType': 'mouse'}, 'actions': actions})
+
     def drag(self, x, y, x2, y2, steps=5):
         """A real drag with the mouse, from a point to another one, in a few moves."""
         moves = [{'type': 'pointerMove', 'x': int(round(x + (x2 - x) * i / steps)), 'y': int(round(y + (y2 - y) * i / steps))}

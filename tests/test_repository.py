@@ -17,7 +17,7 @@ import re
 import subprocess
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DOCUMENTS = ['README.md', 'SPECIFICATIONS.md', 'test_sample.html', 'test_many_links.html']
+DOCUMENTS = ['README.md', 'SPECIFICATIONS.md', 'THEMES.md', 'test_sample.html', 'test_many_links.html']
 SCRIPT = 'GM_EmuleLinker.user.js'
 CHANGELOG = 'CHANGELOG.md'
 FORMER = 'GM_EmuleLinker.js'
@@ -118,10 +118,10 @@ def test_settings_fields_keys(t):
 
 
 def test_screenshots(t):
-    """§ 3.1: every picture shown by the README or SPECIFICATIONS.md exists, and every picture of
+    """§ 3.1: every picture shown by the README, SPECIFICATIONS.md or THEMES.md exists, and every picture of
     screenshots/ is shown by one of them (all of them taken by tests/take_screenshots.py)."""
     used = set()
-    for name in ('README.md', 'SPECIFICATIONS.md'):
+    for name in ('README.md', 'SPECIFICATIONS.md', 'THEMES.md'):
         for path in re.findall(r'!\[[^\]]+\]\(([^)\s]+)\)', read(name)):
             used.add(path)
             t.check(os.path.exists(os.path.join(ROOT, path)), f'{name}: {path} exists')
@@ -130,8 +130,14 @@ def test_screenshots(t):
                for d, _, files in os.walk(folder) for f in files if f.endswith('.png')}
     t.eq(sorted(present - used), [], 'every picture of screenshots/ shown by a document')
     t.check(any(p.startswith('screenshots/spec/') for p in used), 'SPECIFICATIONS.md shows the pictures of screenshots/spec/')
+    # the picture of each theme (SF-13), named after it, and their overview
+    themes = re.findall(r'(?m)^\t(\w+): \{', read(SCRIPT)[read(SCRIPT).index('var THEMES = {'):read(SCRIPT).index('\n};', read(SCRIPT).index('var THEMES = {'))])
+    t.check(len(themes) >= 2, 'the themes of the script found', themes)
+    pictures = {f'screenshots/theme/{name}.png' for name in themes}
+    t.eq(sorted(pictures - present), [], 'a picture for each theme of the script, in screenshots/theme/')
+    t.check('screenshots/theme/0_overview.png' in present, 'the overview of the themes')
     script = read('tests/take_screenshots.py')
-    t.eq(sorted(p for p in present if os.path.basename(p) not in script), [], 'every picture taken by take_screenshots.py')
+    t.eq(sorted(p for p in present - pictures if os.path.basename(p) not in script), [], 'every picture taken by take_screenshots.py')
 
 
 def test_repository_address(t):
@@ -157,19 +163,21 @@ def blocks(text):
 
 def test_code_layout(t):
     """§ 3.1: the order of the script, for a human reader. The PARAM block holds the default values,
-    then the look: the CSS of the popup and of the settings dialog, and the icons of the popup (the
-    themes, I-8, and the languages, I-7, will join them); the CODE block, none of them. The CODE
+    then the look: the CSS of the popup and of the settings dialog, and the icons of the popup, and the
+    texts of the languages (SF-12), and the themes (SF-13); the CODE block, none of them. The CODE
     block is in titled parts, the generic utilities last, as listed by the index at the end of the
     comments of the header."""
     text = read(SCRIPT).replace('\r\n', '\n')
     header, param, lib, code = blocks(text)
-    for name in ('POPUP_CSS', 'MESSAGE_CSS', 'HELP_CSS', 'STATUS_CSS', 'SETTINGS_CSS', 'ICONS'):
+    for name in ('THEMES', 'POPUP_CSS', 'MESSAGE_CSS', 'HELP_CSS', 'STATUS_CSS', 'MENU_CSS', 'SETTINGS_CSS', 'ICONS'):
         found = re.search(r'(?m)^var ' + name + ' = ', param)
         t.check(found and found.start() > param.index('var editRow'), f'{name}: in the PARAM block, after the default values')
         t.check(not re.search(r'(?m)^var ' + name + ' = ', code), f'{name}: not in the CODE block')
-    t.check('<style>' not in code.replace("'<style>' + POPUP_CSS + '</style>'", '').replace("'<style>' + MESSAGE_CSS + '</style>'", '')
-                           .replace("'<style>' + HELP_CSS + '</style>'", ''),
-            'no CSS written in the CODE block')
+    t.check('<style>' not in code.replace("'<style>' + scaledCss(POPUP_CSS) + '</style>'", '')
+                           .replace("'<style>' + scaledCss(MESSAGE_CSS) + '</style>'", '')
+                           .replace("'<style>' + scaledCss(HELP_CSS) + '</style>'", '')
+                           .replace("'<style>' + scaledCss(MENU_CSS) + '</style>'", ''),
+            'no CSS written in the CODE block (the CSS of the PARAM block inserted at the size chosen)')
     t.check('div#theDiv .toolbar' not in code and '#GM_config .config_header' not in code, 'no rule of CSS in the CODE block')
     index = re.search(r'(?ms)^// CONTENTS:.*?\n// -{20,}', header)
     t.check(index, 'an index at the end of the comments of the header')

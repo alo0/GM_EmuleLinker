@@ -681,17 +681,20 @@ class T:
         self.driver.pump(0.2)
 
     def load(self, page='test_sample.html', settings=None, emule_config=1, popup_mode=1, debug=1, servers=None,
-             language='en-US'):
+             language='en-US', dark=False, folded=()):
         """Open a page with a fresh storage. settings: the GM_config values to store
         (None: nothing stored, the script defaults apply). servers: the list of the servers
         stored by the settings dialog, {active, list} (None: nothing stored). language: the language of
         the browser seen by the script (navigator.language), English whatever the system, so that the
-        texts of the tests are the English ones (I-7). emule_config=None simulates
+        texts of the tests are the English ones (SF-12). emule_config=None simulates
         the very first run of the script. debug: the debug traces are on by default, as
         many checks read them; None leaves the setting unstored, as on a new installation.
         popup_mode: the state of the popup once the page is loaded, which the script no longer
         stores (SF-10): 0 closed (the default view Closed added to the settings), 1 normal,
-        2 edit mode (Ctrl+Alt+M pressed after the load)."""
+        2 edit mode (its button pressed after the load). dark: Windows or the browser in dark mode, as the
+        script sees it (prefers-color-scheme, SF-13), light by default whatever the system. folded: the sections of the
+        settings dialog folded, none by default, so that every field can be reached; None leaves the choice unstored, as on a
+        new installation (only General and Servers unfolded)."""
         if popup_mode == 0:
             settings = dict(settings or {}, popupView='closed')
         self.browser.close_other_tabs()
@@ -704,17 +707,24 @@ class T:
         self._navigate('/__blank')
         seed = {'emule_config': emule_config, 'debug_mode': debug,
                 'GM_config': None if settings is None else json.dumps(settings),
-                'servers': None if servers is None else json.dumps(servers)}
+                'servers': None if servers is None else json.dumps(servers),
+                'settings_folded': None if folded is None else json.dumps(list(folded))}
         self.driver.js('localStorage.clear();' + ''.join(
             f'localStorage.setItem({json.dumps("gm:" + k)}, {json.dumps(json.dumps(v))});'
             for k, v in seed.items() if v is not None)
-            + f'localStorage.setItem("test:language", {json.dumps(language)});')
+            + f'localStorage.setItem("test:language", {json.dumps(language)});'
+            + f'localStorage.setItem("test:dark", "{1 if dark else 0}");')
         self.driver.dialogs.clear()
         self.driver.console.clear()
         self.driver.errors.clear()
         self._navigate('/' + page.lstrip('/'))
         if popup_mode == 2:
-            self.keys('m')
+            self.edit_mode()
+
+    def set_dark(self, dark):
+        """Windows or the browser switched to the dark mode (True) or to the light one, the page open (SF-13)."""
+        self.driver.js(f'localStorage.setItem("test:dark", "{1 if dark else 0}"); window.__testDarkChanged();')
+        self.driver.pump(0.2)
 
     def reload(self):
         self.driver.reload()
@@ -761,6 +771,16 @@ class T:
         self.driver.ctrl_alt(letter)
         self.driver.pump(0.2)
 
+    def edit_mode(self):
+        """Normal mode to edit mode, or back, as the button Edit mode does: no keyboard shortcut by default."""
+        self.driver.js('editButton()')
+        self.driver.pump(0.2)
+
+    def close_popup(self):
+        """The popup closed, as its Close button does (with its message): no keyboard shortcut by default."""
+        self.driver.js('closeButton()')
+        self.driver.pump(0.2)
+
     def click(self, selector):
         """A real mouse click on the element, as done by the user."""
         x, y = self.driver.js(
@@ -768,6 +788,33 @@ class T:
             "e.scrollIntoView({block:'center'});var b=e.getBoundingClientRect();"
             "return [b.left+b.width/2, b.top+b.height/2];})()")
         self.driver.click(x, y)
+        self.driver.pump(0.2)
+
+    def _middle(self, selector):
+        return self.driver.js(f"(function(){{var b=document.querySelector({json.dumps(selector)}).getBoundingClientRect();"
+                              "return [b.left+b.width/2, b.top+b.height/2];})()")
+
+    def hover(self, selector):
+        """The mouse moved over the middle of the element, as by the user."""
+        self.driver.mouse(*self._middle(selector))
+        self.driver.pump(0.2)
+
+    def hold(self, selector):
+        """The button of the mouse pressed on the middle of the element, and held: release_away() releases it."""
+        self.driver.mouse(*self._middle(selector), button='down')
+        self.driver.pump(0.2)
+
+    def release_away(self):
+        """The mouse moved to the bottom right corner of the window, away from the screens of the script, and its
+        button released there: a button held is not clicked."""
+        x, y = self.driver.js('[innerWidth - 2, innerHeight - 2]')
+        self.driver.mouse(x, y, button='up')
+        self.driver.pump(0.2)
+
+    def move_away(self):
+        """The mouse moved to the bottom right corner of the window: no button left under it (after a click)."""
+        x, y = self.driver.js('[innerWidth - 2, innerHeight - 2]')
+        self.driver.mouse(x, y)
         self.driver.pump(0.2)
 
     def drag(self, selector, dx, dy):
@@ -921,6 +968,14 @@ def bootstrap_source():
     # the language of the browser seen by the script: the one asked by the test (T.load()), English by default
     shim = ("Object.defineProperty(navigator, 'language', {configurable: true, get: function () {"
             " return localStorage.getItem('test:language') || 'en-US'; }});\n") + shim
+    # the dark mode of the system seen by the script: the one asked by the test (T.load(), T.set_dark()), light by default
+    shim = ("(function () { var real = window.matchMedia && window.matchMedia.bind(window), listeners = [];"
+            " window.__testDarkChanged = function () { var e = {matches: localStorage.getItem('test:dark') == '1'};"
+            " listeners.forEach(function (f) { f(e); }); };"
+            " window.matchMedia = function (q) { if (q != '(prefers-color-scheme: dark)') { return real(q); }"
+            " return {media: q, get matches() { return localStorage.getItem('test:dark') == '1'; },"
+            " addEventListener: function (type, f) { if (type == 'change') { listeners.push(f); } },"
+            " removeEventListener: function () {}}; }; })();\n") + shim
     return BOOTSTRAP.replace('__SHIM__', json.dumps(shim)).replace('__SCRIPT__', json.dumps(script))
 
 

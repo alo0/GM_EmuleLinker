@@ -102,10 +102,10 @@ def test_emule_empty_password(t):
 
 
 def test_emule_popup_closed(t):
-    """SF-5.5: with the popup closed, Ctrl+Alt+A sends every link of the page."""
+    """SF-5.5: with the popup closed, Ctrl+Alt+D sends every link of the page."""
     t.load(settings=client(t, 'emule'))
-    t.keys('c')
-    t.eq(t.js("!!document.getElementById('theDiv')"), False, 'popup closed by Ctrl+Alt+C')
+    t.close_popup()
+    t.eq(t.js("!!document.getElementById('theDiv')"), False, 'popup closed')
     t.keys('d')
     received = t.received(1)
     t.eq(len(received), 1, 'one request')
@@ -186,7 +186,7 @@ def test_category_choice_not_stored(t):
     t.eq(t.stored_settings().get('emuleCat'), '*Audio=1;Video=2', 'settings unchanged')
     t.reload()
     t.eq(t.js("document.getElementById('cat').value"), '1', 'new page: drop-down list on Audio')
-    t.keys('c')
+    t.close_popup()
     t.keys('d')
     received = t.received(1)
     t.eq(len(received), 1, 'one request')
@@ -197,7 +197,7 @@ def test_category_choice_not_stored(t):
 def test_emule_edit_mode_text_sent(t):
     """SF-4.3: in edit mode, the text of the edit box is what is sent."""
     t.load(settings=client(t, 'emule'))
-    t.keys('m')
+    t.edit_mode()
     t.js("document.getElementById('editbox').value = eLinks.filter(function (l) {"
          "return l.indexOf('Paris') >= 0 || l.indexOf('Conf') >= 0; }).join('\\n')")
     t.keys('d')
@@ -229,7 +229,7 @@ def test_emule_silent_sending(t):
     t.eq(len(received), 1, 'one request')
     t.eq(len(t.open_pages()), 1, 'no window opened')
     t.eq(status_line(t), '9 link(s) added to eMule', 'the answer of eMule shown in the popup')
-    t.eq(t.js("document.getElementById('emlStatus').style.color"), 'rgb(0, 102, 0)', 'in green')
+    t.eq(t.js("getComputedStyle(document.getElementById('emlStatus')).color"), 'rgb(0, 102, 0)', 'in green')
     t.check(t.js("[].every.call(document.querySelectorAll('#divBody a.ed2k'), function (a) {"
                  "return a.getAttribute('href').indexOf('ed2k://') == 0; })"), 'the file names hold the ed2k links')
     t.clear_received()
@@ -259,7 +259,7 @@ def test_emule_answers(t):
         end = time.time() + 8
         while time.time() < end and (status_line(t) or 'Please wait').startswith('Please wait'):
             t.pump(0.2)
-        t.eq([status_line(t), t.js("document.getElementById('emlStatus').style.color")], [expected, color], f'{conf or settings}')
+        t.eq([status_line(t), t.js("getComputedStyle(document.getElementById('emlStatus')).color")], [expected, color], f'{conf or settings}')
 
 
 def test_emule_popup_closed_answers(t):
@@ -324,7 +324,7 @@ def test_status_band(t):
     t.pump(1.5)
     t.check(t.js(BAND) is not None, 'an error stays')
     for mode in ('edit mode', 'normal mode'):
-        t.keys('m')
+        t.edit_mode()
         st = t.js(BAND)
         t.check(st and st['inside'] and abs(st['top'] - st['bar']) < 1 and st['text'] == 'eMule refused the password',
                 f'{mode}: the popup rebuilt, the band kept, under the top toolbar', st)
@@ -341,7 +341,7 @@ def test_status_band_views(t):
     popup. In edit mode, over the top of the edit box; the popup closed, alone,
     in the corner of the popup; opening the popup takes it in, over the list."""
     t.load(settings=client(t, 'emule'))
-    t.keys('x')
+    t.keys('w')
     height = t.js("document.getElementById('theDiv').getBoundingClientRect().height")
     t.keys('d')
     st = wait_band(t)
@@ -357,18 +357,18 @@ def test_status_band_views(t):
     st = t.js(BAND)
     t.check(st and st['inside'] and abs(st['top'] - st['bar']) < 1, 'maximized again: the band back in the popup, over the list', st)
     corner = "st and not st['inside'] and abs(st['left']) < 1 and abs(st['top']) < 1 and st['text'] == long and st['seen']"
-    t.keys('c')
+    t.close_popup()
     t.press('Escape')
     st = t.js(BAND)
     t.check(eval(corner), 'maximized, then closed: the band stays, in the corner of the popup', st)
     t.keys('o')
-    t.keys('x')
-    t.keys('c')
+    t.keys('w')
+    t.close_popup()
     t.press('Escape')
     st = t.js(BAND)
     t.check(eval(corner), 'minimized, then closed: the band stays, in the corner of the popup', st)
     t.load(settings=client(t, 'emule', popupCorner='bottom-right'))
-    t.keys('x')
+    t.keys('w')
     t.keys('d')
     st = wait_band(t)
     t.check(st and not st['inside'] and abs(st['right'] - st['popup'][3]) < 1 and abs(st['popup'][0] - st['bottom']) < 1
@@ -395,7 +395,7 @@ def test_status_band_views(t):
 
 def test_emule_waits_once(t):
     """SF-7.12: while eMule answers, "Please wait" is shown and the Download buttons are
-    disabled: a second Ctrl+Alt+A sends nothing more. A late answer is not reported as an
+    disabled: a second Ctrl+Alt+D sends nothing more. A late answer is not reported as an
     unreachable eMule."""
     t.load(settings=client(t, 'emule'))
     t.fake_emule(delay=1.5)
@@ -525,7 +525,7 @@ def test_amule_answers(t):
         t.load(settings=amuleweb_settings(t, **dict(settings, **({'emuleUrl': url} if url else {}))))
         t.fake_amuleweb(**conf)
         t.keys('d')
-        t.eq([wait_status(t), t.js("document.getElementById('emlStatus').style.color")],
+        t.eq([wait_status(t), t.js("getComputedStyle(document.getElementById('emlStatus')).color")],
              [expected.replace('NOAMULE', url or ''), color], f'{conf or settings}')
 
 
@@ -660,7 +660,7 @@ def test_amuleapi_please_wait(t):
     are shown one after the other: its Close button does not move (minimized, the band is as wide as its
     text). The tooltip of its Close button does not tell Escape, which does not close it."""
     t.load(settings=amuleapi_settings(t))
-    t.keys('x')
+    t.keys('w')
     t.amuleapi(delay=2)
     click_add_all(t)
     state = ("(function(){var s=document.getElementById('emlStatus'); if (!s) return null;"
@@ -719,7 +719,7 @@ def choose_server(t, name):
 
 
 def test_server_choice_sending(t):
-    """I-6: the links go to the server chosen in the popup, with its own address, password and
+    """SF-6.12: the links go to the server chosen in the popup, with its own address, password and
     category, by Download and by a click on a file name; the server lists are grayed out while a
     sending waits for its answer."""
     emule = dict(client(t, 'emule'), id='srv1', name='eMule', method='emule', emuleUser='admin')
@@ -837,7 +837,7 @@ def test_amuleapi_partial_success(t):
     t.keys('d')
     t.received(3)
     t.eq([status_line(t), t.js("document.getElementById('emlStatus').className"),
-          t.js("document.getElementById('emlStatus').style.color")],
+          t.js("getComputedStyle(document.getElementById('emlStatus')).color")],
          ['8 link(s) added to aMule, 1 refused: malformed ed2k link', 'doubt', 'rgb(166, 95, 0)'], 'partial result shown, in orange')
 
 
@@ -864,7 +864,7 @@ def test_amuleapi_errors(t):
 def test_amuleapi_popup_closed(t):
     """SF-7.10 and SF-5.5: with the popup closed, a success is silent, an error is an alert."""
     t.load(settings=amuleapi_settings(t))
-    t.keys('c')
+    t.close_popup()
     t.keys('d')
     t.eq(len(by_path(t.received(3), 'downloads')), 1, 'the links are sent')
     t.eq(t.dialogs, [], 'success: no alert')
@@ -1155,12 +1155,12 @@ def test_mldonkey_answers(t):
         t.load(settings=mldonkey_settings(t, **dict(settings, **({'emuleUrl': url} if url else {}))))
         t.fake_mldonkey(**conf)
         t.keys('d')
-        t.eq([wait_status(t), t.js("document.getElementById('emlStatus').style.color")],
+        t.eq([wait_status(t), t.js("getComputedStyle(document.getElementById('emlStatus')).color")],
              [expected.replace('NOMLDONKEY', url or ''), color], f'{conf or settings}')
     t.load(settings=mldonkey_settings(t), popup_mode=2)
     t.js("document.getElementById('editbox').value = eLinks[0] + '\\nGARBAGE\\ned2k://|file|x|abc|/'")
     t.keys('d')
-    t.eq([wait_status(t), t.js("document.getElementById('emlStatus').style.color")], ['1 link(s) added to MLDonkey, 1 refused', 'rgb(166, 95, 0)'],
+    t.eq([wait_status(t), t.js("getComputedStyle(document.getElementById('emlStatus')).color")], ['1 link(s) added to MLDonkey, 1 refused', 'rgb(166, 95, 0)'],
          'edit box: a malformed ed2k link refused (orange: a warning), the text left out')
     t.load(settings=mldonkey_settings(t, emulePwd='wrong'), popup_mode=0)
     t.keys('d')
@@ -1265,7 +1265,7 @@ def test_custom_no_form_left(t):
 
 # ---- nothing to send -----------------------------------------------------------------
 def test_nothing_sent_without_links(t):
-    """SF-5.6: Ctrl+Alt+A on a page without ed2k links sends nothing."""
+    """SF-5.6: Ctrl+Alt+D on a page without ed2k links sends nothing."""
     t.load('__nolinks', settings=client(t, 'emule'))
     t.keys('d')
     t.eq(t.received(timeout=2), [], 'no request')
@@ -1298,11 +1298,11 @@ def test_filter_add_all(t):
 
 
 def test_filter_popup_closed(t):
-    """SF-5.5 and SF-5.7: with the popup closed, Ctrl+Alt+A sends the links that the popup would
+    """SF-5.5 and SF-5.7: with the popup closed, Ctrl+Alt+D sends the links that the popup would
     check: every link but the eMule collection."""
     t.load(settings=client(t, 'emule', checkFilter=BLACKLIST))
-    t.keys('c')
-    t.eq(t.js("!!document.getElementById('theDiv')"), False, 'popup closed by Ctrl+Alt+C')
+    t.close_popup()
+    t.eq(t.js("!!document.getElementById('theDiv')"), False, 'popup closed')
     t.keys('d')
     received = t.received(1)
     t.eq(len(received), 1, 'one request')
@@ -1314,7 +1314,7 @@ def test_filter_popup_closed_nothing_checked(t):
     """SF-5.6 and SF-5.7: with the popup closed and a filter that no file name matches, nothing is
     sent."""
     t.load(settings=client(t, 'emule', checkFilter='/^nothing$/'))
-    t.keys('c')
+    t.close_popup()
     t.keys('d')
     t.eq(t.received(timeout=2), [], 'no request')
     t.check(t.traced('nothing to send'), 'trace of addButton()')

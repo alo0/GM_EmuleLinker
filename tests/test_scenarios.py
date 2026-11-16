@@ -68,19 +68,21 @@ def test_shortcut_settings(t):
 
 
 def test_category_empty(t):
-    """SF-6.5: an empty Category setting raises one alert, no longer stops the script,
-    and the corrected value is stored so that the alert does not come back (SF-8.7)."""
+    """SF-6.5: an empty Category setting is told in the band, in orange until closed (an alert of the browser up to 0.14),
+    no longer stops the script, and the corrected value is stored so that the message does not come back (SF-8.7)."""
     t.load(settings=with_emule(emuleCat=''))
-    t.eq(len(t.dialogs), 1, 'one alert')
-    t.check(t.dialogs and 'No valid category' in t.dialogs[0], 'it is the category alert', t.dialogs)
+    t.eq(t.dialogs, [], 'no alert')
+    t.eq([t.js("(document.querySelector('#emlStatus .emlStatusText') || {}).textContent"), t.js("(document.getElementById('emlStatus') || {}).className")],
+         ['No valid category: the default value (*default=0) is used instead.', 'doubt'], 'told in the band, in orange')
+    t.pump(9)
+    t.check(t.js("!!document.getElementById('emlStatus')"), 'it stays until closed')
     t.check(t.traced('no valid category found'), 'trace of strToCat()')
     t.eq(t.js(ROWS), 9, 'the popup is displayed')
     t.check(t.open_settings(), 'the shortcuts are installed')
     t.close_settings()
     t.eq(t.stored_settings().get('emuleCat'), '*default=0', 'corrected value stored')
-    t.dialogs.clear()
     t.reload()
-    t.eq(t.dialogs, [], 'no alert on the next page load')
+    t.eq(t.js("!!document.getElementById('emlStatus')"), False, 'no message on the next page load')
 
 
 def test_category_without_default(t):
@@ -119,7 +121,7 @@ def field(name):
 
 def test_settings_dialog_look(t):
     """SF-8.1, SF-8.3, SF-8.8 and SF-8.11: title with the version, on the light blue of the toolbars
-    of the popup (I-2), the help of a field shown under it when it has the focus, masked password,
+    of the popup (SF-2.5), the help of a field shown under it when it has the focus, masked password,
     backdrop, Escape to close."""
     t.load(settings=EMULE)
     t.check(t.open_settings(), 'settings dialog opened')
@@ -129,11 +131,11 @@ def test_settings_dialog_look(t):
          t.js("getComputedStyle(document.getElementById('emlTop')).backgroundColor"), 'title on the color of the toolbars')
     t.eq(t.js("getComputedStyle(document.getElementById('GM_config_header')).backgroundColor"), 'rgb(232, 241, 251)', 'light blue')
     tooltips = "document.querySelectorAll('#GM_config .config_var[title]').length"
-    t.eq(t.js("document.querySelectorAll('#GM_config .config_var .help').length"), 19,
-         'a help for each field (User included, 0.12; Links checked by default, 0.13; Language, Default popup view, '
+    t.eq(t.js("document.querySelectorAll('#GM_config .config_var .help').length"), 21,
+         'a help for each field (User included, 0.12; Links checked by default, 0.13; Language, Default popup view, Theme and Size, Toolbars (0.15), '
          'Show a message when the popup is closed, Show the category list, Show the server list, '
-         'Popup position and Popup scrolling in place of Popup Position, 0.14)')
-    t.eq(t.js(tooltips), 19, 'helps hidden: each one is the tooltip of its row')
+         'Popup position and Popup scrolling in place of Popup Position, 0.14; Keyboard shortcuts, 0.15)')
+    t.eq(t.js(tooltips), 21, 'helps hidden: each one is the tooltip of its row')
     shown = ("[].filter.call(document.querySelectorAll('#GM_config .help'), function (h) {"
              "return getComputedStyle(h).display != 'none'; }).length")
     help_btn = "document.getElementById('GM_config_helpBtn').title"
@@ -141,7 +143,7 @@ def test_settings_dialog_look(t):
     t.js(f"{field('emuleCat')}.focus()")
     t.eq(t.js(shown), 0, 'nothing shown on focus: the fields do not move')
     t.click('#GM_config_helpBtn')
-    t.eq([t.js(shown), t.js(help_btn)], [19, 'Hide inline help'], 'Help button: every help shown')
+    t.eq([t.js(shown), t.js(help_btn)], [21, 'Hide inline help'], 'Help button: every help shown')
     t.eq(t.js(tooltips), 0, 'helps shown: no tooltip repeating them')
     # the field, or the field and its Import button (Category, with eMule and aMule 3.x)
     edges = ("(function(n){var f=(document.querySelector('#GM_config_'+n+'_var .catbox')||"
@@ -157,11 +159,11 @@ def test_settings_dialog_look(t):
          [True, True], 'Password and its buttons (Show, Test) as wide as their help')
     t.close_settings()
     t.check(t.open_settings(), 'settings dialog opened again')
-    t.eq(t.js(shown), 19, 'the choice is kept at the next opening')
+    t.eq(t.js(shown), 21, 'the choice is kept at the next opening')
     t.click('#GM_config_helpBtn')
-    t.eq([t.js(shown), t.js(help_btn), t.gm('settings_help'), t.js(tooltips)], [0, 'Display inline help', 0, 19],
+    t.eq([t.js(shown), t.js(help_btn), t.gm('settings_help'), t.js(tooltips)], [0, 'Display inline help', 0, 21],
          'Help button again: hidden, stored, tooltips back')
-    t.eq([t.js(f"{field(n)}.size") for n in ('emuleUrl', 'emuleCat', 'popupHeight', 'editRow')],
+    t.eq([t.js(f"{field(n)}.size") for n in ('emuleUrl', 'emuleCat', 'popupRows', 'editRow')],
          [32, 40, 6, 4], 'fields sized to their content')
     t.eq([t.js("document.getElementById('GM_config_emuleUrl_field_label').textContent"),
           t.js("document.getElementById('GM_config_emulePwd_field_label').textContent")],
@@ -461,7 +463,7 @@ def test_settings_reset_and_undo(t):
     checked and every server removed. It highlights what it changed, and can be undone; Save then
     stores it."""
     custom = {'ed2kDlMethod': 'amuleapi', 'emuleUrl': 'http://192.168.1.10:4711/', 'emulePwd': 'secret',
-              'emuleCat': '*Video=2;Audio=1', 'popupHeight': 600, 'checkFilter': r'/\.cbz$/i'}
+              'emuleCat': '*Video=2;Audio=1', 'popupRows': 20, 'checkFilter': r'/\.cbz$/i'}
     marked = "[].map.call(document.querySelectorAll('#GM_config .config_var.changed'), function (r) { return r.id; })"
     notice = "(document.getElementById('GM_config_notice') || {}).textContent"
     t.load(settings=custom)
@@ -469,20 +471,20 @@ def test_settings_reset_and_undo(t):
     t.check(t.js("!!document.getElementById('GM_config_resetBtn')"), 'Reset button')
     t.js("document.getElementById('GM_config_resetBtn').click()")
     t.eq([[r[2], r[1]] for r in t.js(SERVER_ROWS)], [['Local', True]], 'Local checked, no server')
-    t.eq([t.js(EDITED), t.js(f"{field('popupHeight')}.value"), t.js(f"{field('checkFilter')}.value")], [None, '800', ''],
+    t.eq([t.js(EDITED), t.js(f"{field('popupRows')}.value"), t.js(f"{field('checkFilter')}.value")], [None, '40', ''],
          'no field displayed, default sizes, no filter')
-    t.eq(sorted(t.js(marked)), ['GM_config_checkFilter_var', 'GM_config_ed2kDlMethod_var', 'GM_config_popupHeight_var'],
+    t.eq(sorted(t.js(marked)), ['GM_config_checkFilter_var', 'GM_config_ed2kDlMethod_var', 'GM_config_popupRows_var'],
          'servers, height and filter highlighted')
     t.check((t.js(notice) or '').startswith('3 settings set back to their default value'), 'notice', t.js(notice))
     t.eq(t.stored_settings(), custom, 'nothing saved')
     t.js("document.getElementById('GM_config_undoBtn').click()")
     t.eq([[r[2], r[1]] for r in t.js(SERVER_ROWS)], [['Local', False], ['aMule 3.x (amuleapi)', True]], 'Undo: the server back')
-    t.eq([t.js(f"{field(n)}.value") for n in ('emuleUrl', 'emulePwd', 'emuleCat', 'popupHeight', 'checkFilter')],
-         ['http://192.168.1.10:4711/', 'secret', '*Video=2;Audio=1', '600', r'/\.cbz$/i'], 'Undo: its settings back')
+    t.eq([t.js(f"{field(n)}.value") for n in ('emuleUrl', 'emulePwd', 'emuleCat', 'popupRows', 'checkFilter')],
+         ['http://192.168.1.10:4711/', 'secret', '*Video=2;Audio=1', '20', r'/\.cbz$/i'], 'Undo: its settings back')
     t.eq([t.js(marked), t.js(notice)], [[], None], 'Undo: no highlight, no notice')
     t.js("document.getElementById('GM_config_resetBtn').click()")
     t.save_settings()
-    t.eq([t.stored_settings().get(k) for k in ('ed2kDlMethod', 'emulePwd', 'popupHeight', 'checkFilter')], ['local', '', 800, ''],
+    t.eq([t.stored_settings().get(k) for k in ('ed2kDlMethod', 'emulePwd', 'popupRows', 'checkFilter')], ['local', '', 40, ''],
          'Reset then Save: default values stored')
     t.eq(stored_servers(t)['list'], [], 'no server')
 
@@ -493,8 +495,8 @@ def test_settings_checked_before_saving(t):
     t.load(settings=EMULE)
     t.check(t.open_settings(), 'settings dialog opened')
     t.set_field('emuleCat', ';;')
-    t.set_field('popupHeight', '20')
-    t.set_field('popupWidth', 'abc')
+    t.set_field('popupRows', 'abc')
+    t.set_field('popupCols', '30')
     t.js("document.getElementById('GM_config_saveBtn').click()")
     t.pump(0.5)
     t.eq(t.dialogs, [], 'no alert')
@@ -503,16 +505,16 @@ def test_settings_checked_before_saving(t):
     errors = t.js("[].map.call(document.querySelectorAll('#GM_config .error'), function (e) {"
                   "return e.parentNode.id + ': ' + e.textContent; })")
     t.check(len(errors) == 3, 'three errors shown', errors)
-    t.check(all(any(e.startswith(f'GM_config_{n}_var') for e in errors) for n in ('emuleCat', 'popupHeight', 'popupWidth')),
+    t.check(all(any(e.startswith(f'GM_config_{n}_var') for e in errors) for n in ('emuleCat', 'popupRows', 'popupCols')),
             'each one under its field', errors)
     t.eq(t.js("document.activeElement.id"), 'GM_config_field_emuleCat', 'focus on the first wrong field')
     t.set_field('emuleCat', '*default=0;Video=2')
-    t.set_field('popupHeight', '0')
-    t.set_field('popupWidth', '600')
+    t.set_field('popupRows', '0')
+    t.set_field('popupCols', '60')
     t.save_settings()
     t.eq(t.dialogs, [], 'no alert')
-    t.eq([t.stored_settings().get(k) for k in ('emuleCat', 'popupHeight', 'popupWidth')],
-         ['*default=0;Video=2', 0, 600], 'saved once corrected')
+    t.eq([t.stored_settings().get(k) for k in ('emuleCat', 'popupRows', 'popupCols')],
+         ['*default=0;Video=2', 0, 60], 'saved once corrected')
 
 
 def test_settings_server_url_checked(t):
@@ -534,14 +536,14 @@ def test_settings_server_url_checked(t):
 
 
 def test_edit_mode(t):
-    """SF-4 and SF-5.4: Ctrl+Alt+M shows the links in a text area and back."""
+    """SF-4 and SF-5.4: Edit mode shows the links in a text area, Normal mode back to the list."""
     t.load(settings=EMULE)
-    t.keys('m')
+    t.edit_mode()
     lines = t.js("(function(){var e=document.getElementById('editbox');return e ? e.value.split('\\n') : null})()")
     t.check(lines is not None, 'text area displayed')
     t.eq(len(lines or []), 9, 'one link per line')
     t.eq(t.js("document.getElementById('checkall').disabled"), True, '"check all" disabled')
-    t.keys('m')
+    t.edit_mode()
     t.eq(t.js(ROWS), 9, 'back to the list')
     t.eq(t.js("document.getElementById('checkall').disabled"), False, '"check all" enabled again')
 
@@ -631,11 +633,11 @@ def test_state_applies_to_the_page(t):
     """SF-10.1: the state of the popup applies to the current page only: closed, or in edit mode,
     the next page opens in the default view (maximized), where it used to stay closed."""
     t.load(settings=EMULE)
-    t.keys('c')
+    t.close_popup()
     t.eq(t.js(POPUP), [0, 0, 0], 'closed on this page')
     t.reload()
     t.eq(t.js(POPUP), [1, 9, 0], 'open with its list on the next page')
-    t.keys('m')
+    t.edit_mode()
     t.eq(t.js(POPUP), [1, 0, 1], 'edit mode on this page')
     t.reload()
     t.eq(t.js(POPUP), [1, 9, 0], 'normal mode on the next page')
@@ -668,9 +670,9 @@ def test_default_view_setting(t):
 
 
 def test_close_then_open(t):
-    """SF-9: Ctrl+Alt+C closes the popup, Ctrl+Alt+O opens it again, once."""
+    """SF-9: the popup closed, Ctrl+Alt+O opens it again, once."""
     t.load(settings=EMULE)
-    t.keys('c')
+    t.close_popup()
     t.eq(t.js(POPUP), [0, 0, 0], 'closed')
     t.eq(t.js('popupMode'), 0, 'closed state')
     t.keys('o')
@@ -686,38 +688,43 @@ VIEW = ("(function(){var p=document.querySelectorAll('#theDiv');if(p.length!=1)r
         "if(hidden(b)&&hidden(z))return 'minimized';if(!hidden(b)&&!hidden(z))return 'maximized';return 'mixed';})()")
 
 # [id or class, left, top, width, height] of the controls of a toolbar, in their order
-BAR = ("(function(id){return [].map.call(document.getElementById(id).children,function(e){"
+BAR = ("(function(id){return [].filter.call(document.getElementById(id).children,function(e){return !e.classList.contains('emlOff');})"
+       ".map(function(e){"
        "var r=e.getBoundingClientRect();return [e.id||e.className,r.left,r.top,r.width,r.height];});})")
 
 
-def test_toggle_with_ctrl_alt_x(t):
-    """SF-9 and I-2: Ctrl+Alt+X switches the popup maximized, minimized, closed, in turn, never
+def test_toggle_with_ctrl_alt_w(t):
+    """SF-9 and SF-10: Ctrl+Alt+W switches the popup maximized, minimized, closed, in turn, never
     duplicating it, starting from a popup closed at load (where it used to be duplicated)."""
     t.load(settings=EMULE, popup_mode=0)
     t.eq(t.js(VIEW), 'closed', 'closed at load')
     for expected in ('maximized', 'minimized', 'closed', 'maximized', 'minimized'):
-        t.keys('x')
-        t.eq(t.js(VIEW), expected, f'after Ctrl+Alt+X: {expected}')
-    t.menu('x')
-    t.eq(t.js(VIEW), 'closed', 'menu "Switch view": closed')
+        t.keys('w')
+        t.eq(t.js(VIEW), expected, f'after Ctrl+Alt+W: {expected}')
     t.eq(t.errors, [], 'no JavaScript error')
 
 
 def test_toolbars(t):
-    """SF-2.7 and I-2: the controls of both toolbars, in the order of the mockup, all 22 px high and
+    """SF-2.7: the controls of both toolbars, in the order of the mockup, all 22 px high and
     on one line; the icons at the right of the top one; the category and Download at the right of the
     bottom one; every checkbox of the popup, toolbars and list, in one column, and the file names
-    aligned on the counters. EMULE offers two servers, Local and eMule: the server lists are shown (I-6)."""
+    aligned on the counters. EMULE offers two servers, Local and eMule: the server lists are shown (SF-6.11).
+    The menu button of a narrow popup (SF-2.13), before the settings, is hidden while every control fits."""
     t.load(settings=EMULE)
     top, bottom = t.js(BAR + "('emlTop')"), t.js(BAR + "('emlBottom')")
-    t.eq([c[0] for c in top], ['checkall', 'emlCount', 'srv', 'cat', 'emlAdd', 'emlIcon emlRight', 'emlHelpBtn', 'emlMin', 'emlClose'],
-         'top toolbar: box, counter, server, category, Download, settings, help, minimize, close')
-    t.eq([c[0] for c in bottom], ['checkall2', 'emlCount', 'emlEdit', 'srv2', 'cat2', 'emlAdd'],
-         'bottom toolbar: box, counter, Edit mode, server, category, Download')
-    t.eq(t.js("[].map.call(document.querySelectorAll('#emlTop button'),function(b){"
+    t.eq([c[0] for c in top], ['checkall', 'emlCount', 'srv', 'cat', 'emlAdd', 'emlDrag', 'emlMenuBtn', 'emlIcon emlRight', 'emlHelpBtn',
+                               'emlMin', 'emlClose'],
+         'top toolbar: box, counter, server, category, Download, (free space, menu), settings, help, minimize, close')
+    t.eq([c[3] for c in top if c[0] == 'emlMenuBtn'], [0], 'the menu button hidden: every control fits')
+    t.check(all(c[3] >= 23.5 for c in top if c[0] == 'emlDrag'), 'a free space of 24 px at least, to move the popup', top)
+    top = [c for c in top if c[0] not in ('emlMenuBtn', 'emlDrag')]
+    t.eq([c[0] for c in bottom], ['checkall2', 'emlCount', 'emlEdit', 'emlExport', 'srv2', 'cat2', 'emlAdd'],
+         'bottom toolbar: box, counter, Edit mode, Export, server, category, Download')
+    t.eq(t.js("[].map.call(document.querySelectorAll('#emlTop button:not(.emlOff)'),function(b){"
               "return (b.getAttribute('data-icon')||b.textContent)+' | '+b.title;})"),
-         ['Download | Download the checked links (Ctrl+Alt+D)', 'settings | Settings (Ctrl+Alt+S)', 'help | Help (Ctrl+Alt+H)',
-          'minimize | Minimize (Ctrl+Alt+X)', 'close | Close (Ctrl+Alt+C)'], 'labels (icons) and tooltips of the top toolbar')
+         ['Download | Download the checked links (Ctrl+Alt+D)', 'menu | Menu: the controls that do not fit in the toolbars of a narrow popup',
+          'settings | Settings (Ctrl+Alt+S)', 'help | Help (Ctrl+Alt+H)',
+          'minimize | Minimize (Ctrl+Alt+W)', 'close | Close'], 'labels (icons) and tooltips of the top toolbar')
     for name, bar in (('top', top), ('bottom', bottom)):
         controls = [c for c in bar if c[0] not in ('checkall', 'checkall2', 'emlCount')]
         t.eq(sorted({round(c[4], 1) for c in controls}), [22], f'{name} toolbar: every control 22 px high')
@@ -725,7 +732,7 @@ def test_toolbars(t):
         box, count = bar[0], bar[1]
         centers = [c[2] + c[4] / 2 for c in (box, count, controls[0])]
         t.check(max(centers) - min(centers) < 1, f'{name} toolbar: box and counter centered on the controls', centers)
-    t.eq(t.js("document.querySelectorAll('#theDiv .emlIcon')[0].getBoundingClientRect().width"), 22, 'square icons')
+    t.eq(t.js("document.querySelectorAll('#theDiv .emlIcon:not(.emlMenu)')[0].getBoundingClientRect().width"), 22, 'square icons')
     right = t.js("(function(){var e=document.getElementById('emlTop');"
                  "return e.getBoundingClientRect().right-parseFloat(getComputedStyle(e).paddingRight);})()")
     t.check(abs(top[-1][1] + top[-1][3] - right) < 0.5, 'close at the right of the top toolbar', (top[-1], right))
@@ -749,7 +756,7 @@ GAPS = """(function(){
 
 
 def test_toolbars_centered(t):
-    """I-2: each toolbar is centered between the border of the popup and the line that separates it
+    """SF-2.7: each toolbar is centered between the border of the popup and the line that separates it
     from the list, 5 px above and below its controls; the rows of the list are 17 px high, in both
     browsers; the toolbars have a light blue background, from one side of the frame to the other;
     Download stands out on it, white with a blue border, its text black and not bold."""
@@ -792,7 +799,7 @@ FORUM_STYLES = ('<style>body, td, div { line-height: 0.8; } button, select { pad
 SIZES = """(function(){
   var h=function(e){return Math.round(e.getBoundingClientRect().height*100)/100;};
   var q=function(s){return [].map.call(document.querySelectorAll(s),h);};
-  return {controls: q('#theDiv .toolbar button, #theDiv .toolbar select'), boxes: q('#theDiv input.smallcheck'),
+  return {controls: q('#theDiv .toolbar button:not(.emlMenu):not(.emlOff), #theDiv .toolbar select'), boxes: q('#theDiv input.smallcheck'),
           rows: q('#divBody tr'), bars: q('#theDiv .toolbar'),
           fonts: [].map.call(document.querySelectorAll('#theDiv .toolbar button, #theDiv .toolbar select, #theDiv .emlCount'),
                              function(e){return getComputedStyle(e).fontSize;})};
@@ -800,7 +807,7 @@ SIZES = """(function(){
 
 
 def test_sizes_kept_from_the_page(t):
-    """SF-2.6 and I-2: the sizes of the popup are its own, whatever the styles of the page (a forum
+    """SF-2.6: the sizes of the popup are its own, whatever the styles of the page (a forum
     gave bigger buttons and smaller rows): controls of 22 px, font of 12 px, checkboxes of 13 px,
     rows of 17 px, toolbars of 32 px."""
     t.serve('/__forum', '<!doctype html><meta charset="utf-8"><title>forum page</title>' + FORUM_STYLES
@@ -833,7 +840,7 @@ ALIGN = """(function(){
 
 
 def test_alignments(t):
-    """I-2, as in the mockup: the checkboxes in one column; the file names on the counters; the list
+    """SF-2.11, as in the mockup: the checkboxes in one column; the file names on the counters; the list
     of the top toolbar on Edit mode; close, the bottom Download and the sizes (aligned at the right)
     on one right edge; as much space at the left of the checkboxes as at the right of that edge (9 px)."""
     t.load(settings=EMULE)
@@ -850,14 +857,15 @@ def test_alignments(t):
 
 
 def test_counter_width(t):
-    """I-2: the counter is as wide as its widest value on the page (total/total), its digits all of a
+    """SF-2.10: the counter is as wide as its widest value on the page (total/total), its digits all of a
     width: checking or unchecking links moves nothing; 6 px between the counter and what follows."""
     links = ''.join(f'<div><a href="ed2k://|file|file{i:02d}.cbz|{i}048576|{i:02d}BCDEF1234567890ABCDEF12345678|/">f</a></div>'
                     for i in range(1, 13))
     t.serve('/__twelve', '<!doctype html><meta charset="utf-8"><title>twelve links</title>' + links)
     t.load('__twelve', settings=EMULE)
-    place = "(function(){var c=document.querySelector('#emlTop .emlCount'),r=document.createRange();r.selectNodeContents(c);" \
-            "return [r.getBoundingClientRect().right, c.nextElementSibling.getBoundingClientRect().left];})()"
+    place = "(function(){var c=document.querySelector('#emlTop .emlCount'),r=document.createRange(),n=c.nextElementSibling;" \
+            "while (n && n.classList.contains('emlOff')) { n = n.nextElementSibling; } r.selectNodeContents(c);" \
+            "return [r.getBoundingClientRect().right, n.getBoundingClientRect().left];})()"
     full, list_left = t.js(place)
     t.check(abs(list_left - full - 6) < 0.5, '6 px after 12/12', (full, list_left))
     for i in range(9):
@@ -867,14 +875,14 @@ def test_counter_width(t):
     t.eq(t.errors, [], 'no JavaScript error')
 
 
-ICONS = """(function(){return [].map.call(document.querySelectorAll('#emlTop button.emlIcon'),function(b){
+ICONS = """(function(){return [].map.call(document.querySelectorAll('#emlTop button.emlIcon:not(.emlMenu)'),function(b){
   var s=b.querySelector('svg'), r=b.getBoundingClientRect(), i=s?s.getBoundingClientRect():null;
   return [b.getAttribute('data-icon'), i ? Math.abs((i.top+i.bottom)/2-(r.top+r.bottom)/2) : null,
           i ? Math.abs((i.left+i.right)/2-(r.left+r.right)/2) : null, getComputedStyle(b).color];});})()"""
 
 
 def test_icons(t):
-    """I-2: the icons of the top toolbar are drawn (SVG), centered in their buttons whatever the fonts;
+    """SF-2.7: the icons of the top toolbar are drawn (SVG), centered in their buttons whatever the fonts;
     minimize in blue, close in red, settings in dark grey."""
     t.load(settings=EMULE)
     icons = t.js(ICONS)
@@ -895,7 +903,7 @@ LINES = """(function(){
 
 
 def test_separators(t):
-    """I-2: the toolbars are separated from the list by two lines that do not scroll with it, from one
+    """SF-2.9: the toolbars are separated from the list by two lines that do not scroll with it, from one
     side of the frame to the other; none in edit mode, where the frame of the edit box separates."""
     many_links(t, 60)
     t.load('__many', settings=EMULE)
@@ -905,7 +913,7 @@ def test_separators(t):
     t.js("document.getElementById('divBody').scrollTop=300")
     t.pump(0.2)
     t.eq(t.js(LINES)['top'], '1px solid', 'still there once the list scrolled')
-    t.keys('m')
+    t.edit_mode()
     lines = t.js(LINES)
     t.eq([lines['hr'], lines['top'], lines['bottom']], [0, '0px none', '0px none'], 'edit mode: no line')
     t.eq(t.errors, [], 'no JavaScript error')
@@ -927,7 +935,7 @@ def scroll_to(t, where):
 
 
 def test_scroll_shadows(t):
-    """I-2: a shadow on the edge of the list where links are hidden: at the bottom when the list is at
+    """SF-2.9: a shadow on the edge of the list where links are hidden: at the bottom when the list is at
     its top, on both edges in the middle, at the top at its bottom; laid over the list, without its
     scrollbar; none when every link is shown, nor in edit mode."""
     t.load(settings=EMULE)
@@ -942,20 +950,20 @@ def test_scroll_shadows(t):
     t.js("document.getElementById('theDiv').style.height='200px'")
     scroll_to(t, '0')
     t.eq(t.js(SHADOWS)[1][1:], [True, True, True], 'a smaller popup: the bottom shadow follows the list')
-    t.keys('m')
+    t.edit_mode()
     t.eq(t.js(SHADOWS), [], 'edit mode: no shadow')
     t.eq(t.errors, [], 'no JavaScript error')
 
 
 def test_counter(t):
-    """I-2: the counters tell the links that Download sends: the checked ones out of the links of the
+    """SF-2.10: the counters tell the links that Download sends: the checked ones out of the links of the
     page, in both toolbars; in edit mode, the links of the text, as typed."""
     counters = "[].map.call(document.querySelectorAll('#theDiv .emlCount'),function(c){return c.textContent;})"
     t.load(settings=EMULE)
     t.eq(t.js(counters), ['9/9', '9/9'], 'every link checked')
     t.click('#l3')
     t.eq(t.js(counters), ['8/9', '8/9'], 'one link unchecked')
-    t.keys('m')
+    t.edit_mode()
     t.eq(t.js(counters), ['9/9', '9/9'], 'edit mode: the links of the text')
     t.js("var e=document.getElementById('editbox');e.value=e.value.split('\\n').slice(2).join('\\n');"
          "e.dispatchEvent(new Event('input'))")
@@ -964,7 +972,7 @@ def test_counter(t):
 
 
 def test_minimize(t):
-    """I-2: the minimize button shows the top toolbar only, at the same width: nothing moves in it;
+    """SF-2.12: the minimize button shows the top toolbar only, at the same width: nothing moves in it;
     the list and the bottom toolbar are only hidden, the checked links kept; maximize shows them again.
     The same with the edit box, its text kept."""
     t.load(settings=EMULE)
@@ -974,7 +982,7 @@ def test_minimize(t):
     t.click('#emlMin')
     t.eq(t.js(VIEW), 'minimized', 'minimized')
     t.eq(t.js("document.getElementById('emlMin').getAttribute('data-icon')+' | '+document.getElementById('emlMin').title"),
-         'maximize | Maximize (Ctrl+Alt+X)', 'the button maximizes now')
+         'maximize | Maximize (Ctrl+Alt+W)', 'the button maximizes now')
     after = t.js(BAR + "('emlTop')")
     t.check(all(abs(a[1] - b[1]) < 0.5 and abs(a[2] - b[2]) < 0.5 for a, b in zip(before, after)),
             'nothing moved in the top toolbar', (before, after))
@@ -982,7 +990,7 @@ def test_minimize(t):
     t.click('#emlMin')
     t.eq(t.js(VIEW), 'maximized', 'maximized again')
     t.eq(t.js("document.getElementById('l2').checked"), False, 'the unchecked link still unchecked')
-    t.keys('m')
+    t.edit_mode()
     t.js("document.getElementById('editbox').value='ed2k://|file|kept.avi|1|0123456789ABCDEF0123456789ABCDEF|/'")
     t.click('#emlMin')
     t.eq(t.js(VIEW), 'minimized', 'edit mode minimized')
@@ -993,7 +1001,7 @@ def test_minimize(t):
 
 
 def test_default_view_minimized(t):
-    """SF-10.2 and I-2: with the default view Minimized, the popup opens minimized, its top toolbar
+    """SF-10.2 and SF-2.12: with the default view Minimized, the popup opens minimized, its top toolbar
     exactly where it is in a maximized popup; Ctrl+Alt+O maximizes it."""
     t.load(settings=EMULE)
     maximized = t.js(BAR + "('emlTop')")
@@ -1008,26 +1016,26 @@ def test_default_view_minimized(t):
 
 
 def test_check_all_shortcut(t):
-    """I-2: Ctrl+Alt+A (and the menu entry) checks or unchecks every link, as the box of the top
+    """SF-9: Ctrl+Alt+A checks or unchecks every link, as the box of the top
     toolbar, and sends nothing; nothing in edit mode, where there is no box to check."""
     checked = "[].filter.call(document.querySelectorAll('#divBody input.smallcheck'),function(b){return b.checked;}).length"
     t.load(settings=EMULE)
     t.keys('a')
     t.eq(t.js(checked), 0, 'Ctrl+Alt+A: every link unchecked')
-    t.menu('a')
-    t.eq(t.js(checked), 9, 'menu: every link checked again')
+    t.keys('a')
+    t.eq(t.js(checked), 9, 'again: every link checked again')
     t.click('#l0')
     t.keys('a')
     t.eq(t.js(checked), 9, 'Ctrl+Alt+A on a mixed box: every link checked')
     t.eq(t.dialogs, [], 'nothing sent: no alert')
-    t.keys('m')
+    t.edit_mode()
     t.keys('a')
     t.eq(t.js("document.querySelectorAll('#editbox').length"), 1, 'edit mode: nothing changes')
     t.eq(t.errors, [], 'no JavaScript error')
 
 
 def test_category_lists(t):
-    """I-2: the category lists of both toolbars show the same category, chosen in either one."""
+    """SF-6.1: the category lists of both toolbars show the same category, chosen in either one."""
     t.load(settings=dict(EMULE, emuleCat='*default=0;Video=2;Audio=1'))
     t.js("var s=document.getElementById('cat2');s.value='1';s.dispatchEvent(new Event('change'))")
     t.eq([t.js("document.getElementById('cat').value"), t.js("emuleCat.filter(function(c){return c.select==1;})[0].value")],
@@ -1037,11 +1045,11 @@ def test_category_lists(t):
 
 CAT_LISTS = """[].map.call(document.querySelectorAll('#theDiv select.emlCat'),function(s){
   return [s.id, s.disabled, Math.round(s.getBoundingClientRect().width*10)/10, s.title];})"""
-LONG_CATEGORY = 'Comics and graphic novels (French)'
+LONG_CATEGORY = 'Documentaries and lectures (French)'
 
 
 def test_category_list_grayed(t):
-    """I-2: the category lists are grayed out when the server has fewer than two categories."""
+    """SF-6.4: the category lists are grayed out when the server has fewer than two categories."""
     t.load(settings=dict(EMULE, emuleCat='*default=0'))
     t.eq([c[:2] for c in t.js(CAT_LISTS)], [['cat', True], ['cat2', True]], 'one category: both lists grayed out')
     t.load(settings=dict(EMULE, emuleCat='*default=0;Video=2'))
@@ -1050,22 +1058,24 @@ def test_category_list_grayed(t):
 
 
 def test_category_list_width(t):
-    """I-2: the category lists are 140 px wide at most (categoryListMaxWidth): a long name does not
+    """SF-6.1: the category lists are 22 characters wide at most (categoryListMaxWidth): a long name does not
     widen the popup, it is cut, and the tooltip of the lists tells the category chosen, whole. They are
-    100 px wide at least (categoryListMinWidth): short names of another server (I-6) move nothing."""
+    16 characters wide at least (categoryListMinWidth): short names of another server (SF-6.11) move nothing.
+    In characters of the lists, their widths follow the size of the text (SF-2.5)."""
+    bounds = "(function (s) { return [parseFloat(s.minWidth), parseFloat(s.maxWidth)]; })(getComputedStyle(document.getElementById('cat')))"
     t.load(settings=dict(EMULE, emuleCat='*default=0;Video=2'))
+    least, most = t.js(bounds)
     short = t.js(CAT_LISTS)
-    t.eq([c[2] for c in short], [100, 100], 'short names: 100 px')
-    t.eq(t.js('categoryListMinWidth'), 100, 'a parameter of the script')
+    t.check(all(abs(c[2] - least) < 0.5 for c in short), 'short names: 16 characters', [short, least])
+    t.eq(t.js('[categoryListMinWidth, categoryListMaxWidth]'), [16, 22], 'parameters of the script, in characters')
     t.load(settings=dict(EMULE, emuleCat='*Default=0;Audio=1;Documents=4;Software=5'))
     medium = t.js(CAT_LISTS)
-    t.check(all(100 <= c[2] < 140 for c in medium), 'medium names: between 100 and 140 px', medium)
+    t.check(all(least - 0.5 <= c[2] < most for c in medium), 'medium names: between 16 and 22 characters', medium)
     t.check(all(c[3].startswith('Category: default') for c in short), 'the category chosen in the tooltip', short)
     t.load(settings=dict(EMULE, emuleCat=f'*{LONG_CATEGORY}=3;default=0;Video=2'))
     lists = t.js(CAT_LISTS)
-    t.eq([c[2] for c in lists], [140, 140], 'a long name: 140 px')
+    t.check(all(abs(c[2] - most) < 0.5 for c in lists), 'a long name: 22 characters', [lists, most])
     t.check(all(c[3].startswith('Category: ' + LONG_CATEGORY) for c in lists), 'the whole name in the tooltip', lists)
-    t.eq(t.js('categoryListMaxWidth'), 140, 'a parameter of the script')
     t.js("var s=document.getElementById('cat');s.value='2';s.dispatchEvent(new Event('change'))")
     t.check(all(c[3].startswith('Category: Video') for c in t.js(CAT_LISTS)), 'another category chosen: the tooltips follow',
             t.js(CAT_LISTS))
@@ -1073,32 +1083,20 @@ def test_category_list_width(t):
 
 
 def test_show_category_list_setting(t):
-    """SF-8 and I-2: the setting "Show the category list" of the Popup section, checked by default;
-    unchecked, the toolbars have no category list, Download follows the counter, and the links are sent
-    to the default category of the server."""
-    t.load(settings=EMULE)
-    t.check(t.open_settings(), 'settings dialog opened')
-    t.eq(t.js("document.getElementById('GM_config_showCategories_field_label').textContent"), 'Show the category list', 'label')
-    t.eq(t.js("[document.getElementById('GM_config_field_showCategories').type, document.getElementById('GM_config_field_showCategories').checked]"),
-         ['checkbox', True], 'a checkbox, checked by default')
-    t.eq(t.js("document.getElementById('GM_config_showCategories_var').closest('.section_header_holder')"
-              ".querySelector('.section_header').textContent"), 'Popup', 'in the Popup section')
-    help = t.js("document.querySelector('#GM_config_showCategories_var .help').textContent")
-    t.check('grayed out' in help and 'fewer than two categories' in help, 'the help tells when it is grayed out', help)
-    t.js("document.getElementById('GM_config_field_showCategories').checked = false")
-    t.js("document.getElementById('GM_config_resetBtn').click()")
-    t.eq(t.js("[document.getElementById('GM_config_field_showCategories').checked,"
-              " document.getElementById('GM_config_showCategories_var').classList.contains('changed')]"),
-         [True, True], 'Reset: checked again, highlighted')
-    t.js("document.getElementById('GM_config_field_showCategories').checked = false")
-    t.js("document.getElementById('GM_config_saveBtn').click()")
-    t.pump(1)
-    t.eq(t.stored_settings().get('showCategories'), False, 'unchecked, saved')
-    t.load(settings=dict(EMULE, emuleCat='default=0;*Video=2', showCategories=False))
+    """SF-2.14 and SF-6.10: the category list shown nowhere (Not shown in both toolbars, not in the menu): the toolbars
+    have no category list, Download follows the server list, and the links are sent to the default category of the
+    server. Shown in the bottom toolbar only: there only, and the category chosen there is sent."""
+    none = dict(EMULE, emuleCat='default=0;*Video=2', tbCategoryTop='none', tbCategoryBottom='none')
+    t.load(settings=none)
     t.eq(t.js(CAT_LISTS), [], 'no category list')
     top = t.js(BAR + "('emlTop')")
     t.eq([c[0] for c in top][:4], ['checkall', 'emlCount', 'srv', 'emlAdd'], 'top toolbar: Download after the server list')
     t.eq(t.js('getSelectedCat()'), '2', 'the default category of the server is sent')
+    t.load(settings=dict(none, tbCategoryBottom='shown'))
+    t.eq(t.js("[getComputedStyle(document.getElementById('cat')).display, getComputedStyle(document.getElementById('cat2')).display]"),
+         ['none', 'block'], 'shown in the bottom toolbar only')
+    t.js("var s=document.getElementById('cat2'); s.value='0'; s.dispatchEvent(new Event('change'))")
+    t.eq(t.js('getSelectedCat()'), '0', 'the category chosen in the bottom toolbar is sent')
     t.eq(t.errors, [], 'no JavaScript error')
 
 
@@ -1138,10 +1136,10 @@ def choose_server(t, list_id, name):
 
 
 def test_server_list(t):
-    """I-6: a server list in both toolbars, before the category list, when it offers two choices at
+    """SF-6.11: a server list in both toolbars, before the category list, when it offers two choices at
     least, Local included: Local, then the servers in the order of the settings; each page starts on the
-    server checked in the settings. 140 px wide at most (serverListMaxWidth), the tooltip tells the
-    server chosen, whole."""
+    server checked in the settings. 22 characters wide at most (serverListMaxWidth, following the size of
+    the text), the tooltip tells the server chosen, whole."""
     t.load()
     t.eq(t.js(SRV_LISTS), [], 'Local only: no server list')
     t.load(settings=EMULE)
@@ -1158,28 +1156,29 @@ def test_server_list(t):
     t.check(all(s[4] < 140 for s in lists), 'short names: the lists keep their width', lists)
     t.eq([c[0] for c in t.js(BAR + "('emlTop')")][:5], ['checkall', 'emlCount', 'srv', 'cat', 'emlAdd'],
          'top toolbar: the server list before the category list')
-    t.eq([c[0] for c in t.js(BAR + "('emlBottom')")][:6], ['checkall2', 'emlCount', 'emlEdit', 'srv2', 'cat2', 'emlAdd'],
+    t.eq([c[0] for c in t.js(BAR + "('emlBottom')")][:7], ['checkall2', 'emlCount', 'emlEdit', 'emlExport', 'srv2', 'cat2', 'emlAdd'],
          'bottom toolbar: the server list before the category list')
     t.eq(t.js("['srv2','cat2'].map(function(id){return document.getElementById(id).classList.contains('emlRight');})"),
          [True, False], 'bottom toolbar: the server list starts the group at the right')
     t.load(settings=dict(EMULE, showCategories=False), servers=None)
-    t.eq([c[0] for c in t.js(BAR + "('emlBottom')")][:5], ['checkall2', 'emlCount', 'emlEdit', 'srv2', 'emlAdd'],
+    t.eq([c[0] for c in t.js(BAR + "('emlBottom')")][:6], ['checkall2', 'emlCount', 'emlEdit', 'emlExport', 'srv2', 'emlAdd'],
          'no category list: Download follows the server list')
     servers = two_servers(name='The big network attached storage of the attic')
     t.load(settings=settings_of(servers), servers=servers)
     lists = t.js(SRV_LISTS)
-    t.eq([s[4] for s in lists], [140, 140], 'a long name: 140 px')
+    most = t.js("parseFloat(getComputedStyle(document.getElementById('srv')).maxWidth)")
+    t.check(all(abs(s[4] - most) < 0.5 for s in lists), 'a long name: 22 characters', [lists, most])
     t.check(all(s[5].startswith('Server: The big network attached storage of the attic,') for s in lists),
             'the whole name in the tooltip', lists)
-    t.eq(t.js('serverListMaxWidth'), 140, 'a parameter of the script')
-    t.keys('x')
+    t.eq(t.js('serverListMaxWidth'), 22, 'a parameter of the script, in characters')
+    t.keys('w')
     t.eq(t.js("[].map.call(document.querySelectorAll('#theDiv select.emlSrv'),function(s){return [s.id, s.getClientRects().length>0];})"),
          [['srv', True], ['srv2', False]], 'minimized: the server list of the top toolbar')
     t.eq(t.errors, [], 'no JavaScript error')
 
 
 def test_server_list_choice(t):
-    """I-6: the server chosen in the popup receives the links of this page only: both lists show it,
+    """SF-6.13: the server chosen in the popup receives the links of this page only: both lists show it,
     the category lists offer its categories, from its default one, grayed out as for the server of the
     settings; nothing is stored, the next page starts on the server of the settings again."""
     servers = two_servers()
@@ -1212,7 +1211,7 @@ def test_server_list_choice(t):
 
 
 def test_server_settings_read_late(t):
-    """I-6: the list of the servers is read only on a page with ed2k links, where the popup can show it;
+    """SF-6.12: the list of the servers is read only on a page with ed2k links, where the popup can show it;
     the settings of the servers that are not checked (their password included) are read only when one is
     chosen in the popup, so that they leave the storage only on an action of the user."""
     servers = two_servers()
@@ -1229,30 +1228,15 @@ def test_server_settings_read_late(t):
 
 
 def test_show_server_list_setting(t):
-    """SF-8 and I-6: the setting "Show the server list" of the Popup section, after "Show the category
-    list", checked by default; unchecked, the toolbars have no server list."""
-    t.load(settings=EMULE)
-    t.check(t.open_settings(), 'settings dialog opened')
-    t.eq(t.js("document.getElementById('GM_config_showServerList_field_label').textContent"), 'Show the server list', 'label')
-    t.eq(t.js("[document.getElementById('GM_config_field_showServerList').type, document.getElementById('GM_config_field_showServerList').checked]"),
-         ['checkbox', True], 'a checkbox, checked by default')
-    t.eq(t.js("document.getElementById('GM_config_showCategories_var').nextElementSibling.id"), 'GM_config_showServerList_var',
-         'after "Show the category list"')
-    help = t.js("document.querySelector('#GM_config_showServerList_var .help').textContent")
-    t.check('two choices' in help and 'Local' in help and 'this page only' in help, 'the help tells when it is shown', help)
-    t.js("document.getElementById('GM_config_field_showServerList').checked = false")
-    t.js("document.getElementById('GM_config_resetBtn').click()")
-    t.eq(t.js("[document.getElementById('GM_config_field_showServerList').checked,"
-              " document.getElementById('GM_config_showServerList_var').classList.contains('changed')]"),
-         [True, True], 'Reset: checked again, highlighted')
-    t.js("document.getElementById('GM_config_field_showServerList').checked = false")
-    t.js("document.getElementById('GM_config_saveBtn').click()")
-    t.pump(1)
-    t.eq(t.stored_settings().get('showServerList'), False, 'unchecked, saved')
+    """SF-2.14 and SF-6.15: the server list shown nowhere (Not shown in both toolbars, not in the menu): the toolbars have
+    no server list; shown in the top toolbar only: there only."""
     servers = two_servers()
-    t.load(settings=dict(settings_of(servers), showServerList=False), servers=servers)
+    t.load(settings=dict(settings_of(servers), tbServerTop='none', tbServerBottom='none'), servers=servers)
     t.eq(t.js(SRV_LISTS), [], 'no server list')
     t.eq([c[0] for c in t.js(BAR + "('emlTop')")][:4], ['checkall', 'emlCount', 'cat', 'emlAdd'], 'top toolbar: as before')
+    t.load(settings=dict(settings_of(servers), tbServerBottom='none'), servers=servers)
+    t.eq(t.js("[getComputedStyle(document.getElementById('srv')).display, getComputedStyle(document.getElementById('srv2')).display]"),
+         ['block', 'none'], 'shown in the top toolbar only')
     t.eq(t.errors, [], 'no JavaScript error')
 
 
@@ -1267,10 +1251,10 @@ MSG_BACKDROP = """(function(b){return b ? [getComputedStyle(b).backgroundColor, 
 
 
 def test_close_message(t):
-    """I-3: closing the popup (its Close button, Ctrl+Alt+C, the menu) shows a box inside the page,
+    """SF-10.4: closing the popup (its Close button, the menu) shows a box inside the page,
     centered in the window, on a backdrop as the settings dialog, so that it cannot be missed: the page
     cannot be clicked behind it. It tells how to open the popup again; OK, its Close button or Escape
-    close it, with its backdrop, and so does the popup opened again. Not with Ctrl+Alt+X, which goes through the views, nor at the load of a
+    close it, with its backdrop, and so does the popup opened again. Not with Ctrl+Alt+W, which goes through the views, nor at the load of a
     page whose default view is Closed, nor when no popup was open."""
     t.load(settings=EMULE)
     t.eq(t.js(MSG), None, 'no message while the popup is open')
@@ -1279,10 +1263,10 @@ def test_close_message(t):
     t.check(msg is not None, 'the Close button: a message')
     if msg:
         t.eq(msg[0], 'Emule Linker — Popup closed', 'its title, as the one of the settings dialog')
-        t.check(all(w in msg[1] for w in ('Ctrl+Alt+O', 'Ctrl+Alt+X', 'Open Popup', 'Tampermonkey', 'Default popup view')),
+        t.check(all(w in msg[1] for w in ('Ctrl+Alt+O', 'Ctrl+Alt+W', 'Open Popup', 'Tampermonkey', 'Default popup view')),
                 'how to open the popup again, the menu of the userscript manager, the next pages', msg[1])
         t.eq(t.js("[].map.call(document.querySelectorAll('#emlMsg .emlMsgText li'), function (li) { return li.textContent; })"),
-             ['press Ctrl+Alt+O, or', 'press Ctrl+Alt+X, or', 'choose Open Popup in the menu of Tampermonkey.'],
+             ['press Ctrl+Alt+O, or', 'press Ctrl+Alt+W, or', 'choose Open Popup in the menu of Tampermonkey.'],
              'the ways to open it again, as a list')
         t.eq(t.js("(function(a){return a ? [a.textContent, a.href, a.target] : null;})"
                   "(document.querySelector('#emlMsg .emlMsgText a'))"),
@@ -1295,28 +1279,28 @@ def test_close_message(t):
     t.click('#emlMsgOk')
     t.eq([t.js(MSG), t.js(MSG_BACKDROP)], [None, None], 'OK: gone, with its backdrop')
     t.keys('o')
-    t.keys('c')
-    t.check(t.js(MSG) is not None, 'Ctrl+Alt+C: a message')
+    t.close_popup()
+    t.check(t.js(MSG) is not None, 'closed again: a message')
     t.press('Escape')
     t.eq([t.js(MSG), t.js(MSG_BACKDROP)], [None, None], 'Escape: gone, with its backdrop')
     t.keys('o')
-    t.menu('c')
-    t.check(t.js(MSG) is not None, 'menu Close Popup: a message')
+    t.close_popup()
+    t.check(t.js(MSG) is not None, 'closed once more: a message')
     t.click('#emlMsgClose')
     t.eq(t.js(MSG), None, 'its Close button: gone')
     t.keys('o')
-    t.keys('c')
+    t.close_popup()
     t.keys('o')
     t.eq([t.js(MSG), t.js(MSG_BACKDROP), t.js(VIEW)], [None, None, 'maximized'], 'the popup opened again: the message gone')
-    t.keys('c')
-    t.keys('c')
+    t.close_popup()
+    t.close_popup()
     t.eq(t.js("[document.querySelectorAll('#emlMsg').length, document.querySelectorAll('#emlMsgBackdrop').length]"), [1, 1],
-         'Ctrl+Alt+C again, the popup closed: one message')
+         'closed again, the popup closed: one message')
     t.press('Escape')
     t.keys('o')
-    t.keys('x')
-    t.keys('x')
-    t.eq([t.js(MSG), t.js(VIEW)], [None, 'closed'], 'Ctrl+Alt+X: closed, no message')
+    t.keys('w')
+    t.keys('w')
+    t.eq([t.js(MSG), t.js(VIEW)], [None, 'closed'], 'Ctrl+Alt+W: closed, no message')
     t.eq(t.stored_settings().get('closeMessage'), None, 'nothing stored')
     t.load(settings=dict(EMULE, popupScroll='static'))
     t.click('#emlClose')
@@ -1327,7 +1311,7 @@ def test_close_message(t):
 
 
 def test_close_message_dont_display(t):
-    """I-3: "Don't display again", checked when the message is closed (OK, its Close button or
+    """SF-10.5: "Don't display again", checked when the message is closed (OK, its Close button or
     Escape), unchecks the setting at once: no message any more, on this page and the next ones; the
     other settings stay as they were."""
     t.load(settings=EMULE)
@@ -1336,7 +1320,7 @@ def test_close_message_dont_display(t):
     t.click('#emlMsgOk')
     t.eq(t.stored_settings(), dict(EMULE, closeMessage=False), 'stored at once, the other settings as they were')
     t.keys('o')
-    t.keys('c')
+    t.close_popup()
     t.eq(t.js(MSG), None, 'not displayed again on this page')
     t.reload()
     t.click('#emlClose')
@@ -1354,7 +1338,7 @@ def test_close_message_dont_display(t):
 
 
 def test_close_message_setting(t):
-    """SF-8.19 and I-3: the setting "Show a message when the popup is closed" of the General section,
+    """SF-8.19 and SF-10.4: the setting "Show a message when the popup is closed" of the General section,
     after the default view, checked by default; unchecked, no message; checked again, the message is back."""
     t.load(settings=EMULE)
     t.check(t.open_settings(), 'settings dialog opened')
@@ -1362,10 +1346,10 @@ def test_close_message_setting(t):
          'Show a message when the popup is closed', 'label')
     t.eq(t.js("[document.getElementById('GM_config_field_closeMessage').type, document.getElementById('GM_config_field_closeMessage').checked]"),
          ['checkbox', True], 'a checkbox, checked by default')
-    t.eq(t.js("document.getElementById('GM_config_popupView_var').nextElementSibling.id"), 'GM_config_closeMessage_var',
-         'in the General section, after Default popup view')
+    t.eq(t.js("document.getElementById('GM_config_popupScroll_var').nextElementSibling.id"), 'GM_config_closeMessage_var',
+         'in the Popup section, after Popup scrolling')
     help = t.js("document.querySelector('#GM_config_closeMessage_var .help').textContent")
-    t.check('Ctrl+Alt+C' in help and "Don't display again" in help, 'the help tells when it is shown, and the box of the message', help)
+    t.check('✕ button' in help and "Don't display again" in help, 'the help tells when it is shown, and the box of the message', help)
     t.js("document.getElementById('GM_config_field_closeMessage').checked = false")
     t.js("document.getElementById('GM_config_resetBtn').click()")
     t.eq(t.js("[document.getElementById('GM_config_field_closeMessage').checked,"
@@ -1396,7 +1380,7 @@ HELP_ROWS = """[].map.call(document.querySelectorAll('#emlHelp .emlHelpRows tr')
 
 
 def test_help(t):
-    """I-5: the help built into the script, from the ? button of the top toolbar (between Settings and
+    """SF-11: the help built into the script, from the ? button of the top toolbar (between Settings and
     Minimize), Ctrl+Alt+H or the menu: a box inside the page, titled with the version, which draws each
     control of the toolbars with what it does and its shortcut, and links to the documentation and to
     the issues on GitHub, in a new tab. No backdrop: the popup stays usable. OK, its Close button,
@@ -1425,9 +1409,9 @@ def help_box(t):
         return
     t.eq(help['title'], f'Emule Linker {script_version()} — Help', 'its title, with the version')
     t.eq(t.js("getComputedStyle(document.getElementById('emlHelp')).opacity"), '1', 'opaque, as the settings dialog')
-    t.eq(t.js(HELP_ROWS), [[True, s] for s in ('Ctrl+Alt+A', '', '', '', 'Ctrl+Alt+D', 'Ctrl+Alt+M', 'Ctrl+Alt+S',
-                                                 'Ctrl+Alt+H', 'Ctrl+Alt+X', 'Ctrl+Alt+C')],
-         'each control of the toolbars drawn, with its shortcut')
+    t.eq(t.js(HELP_ROWS), [[True, s] for s in ('Ctrl+Alt+A', '', '', '', 'Ctrl+Alt+D', '', 'Ctrl+Alt+C', 'Ctrl+Alt+S',
+                                                 'Ctrl+Alt+H', 'Ctrl+Alt+W', '', '')],
+         'each control of the toolbars drawn, with its shortcut, the menu button of a narrow popup last')
     t.eq(t.js("[].map.call(document.querySelectorAll('#emlHelp .emlHelpRows tr'), function (tr) { return tr.cells[0].textContent; }).slice(2, 4)"),
          ['Server ▾', 'Category ▾'], 'the server and category lists drawn with generic names, not those of a user')
     text = t.js("document.getElementById('emlHelp').textContent")
@@ -1463,7 +1447,7 @@ def help_box(t):
 
 
 def test_help_position(t):
-    """I-5: the help is centered in the space at the right of the popup, so that both can be read at
+    """SF-11: the help is centered in the space at the right of the popup, so that both can be read at
     once; when it does not fit there, or without popup, it is centered in the window. It follows the
     window resized, and stays in it."""
     def middle(h):
@@ -1488,7 +1472,7 @@ def test_help_position(t):
         t.check(h['top'] >= 0 and h['bottom'] <= h['height'] and h['left'] >= 0 and h['right'] <= h['width'], 'in the window', h)
         t.set_viewport(1366, 768)
         t.keys('h')
-        t.keys('c')
+        t.close_popup()
         t.press('Escape')
         t.keys('h')
         h = t.js(HELP)
@@ -1500,7 +1484,7 @@ def test_help_position(t):
 
 
 def test_help_drag(t):
-    """I-5: the help is moved by dragging its title bar (a "move" cursor on it), within the window; not
+    """SF-11: the help is moved by dragging its title bar (a "move" cursor on it), within the window; not
     from its Close button, and without selecting text. Its place is kept for the page: closed and opened
     again, it comes back there, and a smaller window only brings it back into it. The next page places
     it automatically again."""
@@ -1508,7 +1492,7 @@ def test_help_drag(t):
         return [round(h['left']), round(h['top'])]
     t.load(settings=EMULE)
     try:
-        t.set_viewport(1366, 768)
+        t.set_viewport(1366, 900)
         t.keys('h')
         t.eq(t.js("[getComputedStyle(document.querySelector('#emlHelp .emlHelpHead')).cursor,"
                   " getComputedStyle(document.getElementById('emlHelpClose')).cursor]"), ['move', 'default'],
@@ -1536,7 +1520,7 @@ def test_help_drag(t):
         h = t.js(HELP)
         t.check(round(h['left']) <= 150 and round(h['top']) == 20 and h['right'] <= h['width'] + 0.5,
                 'a smaller window: brought back into it, not centered again', h)
-        t.set_viewport(1366, 768)
+        t.set_viewport(1366, 900)
         t.reload()
         t.keys('h')
         t.eq(place(t.js(HELP)), place(auto), 'the next page: placed automatically again')
@@ -1570,7 +1554,7 @@ def test_settings_header_buttons(t):
     t.click('#GM_config_helpBtn')
     save = "(function(s){return [s.borderTopWidth+' '+s.borderTopStyle+' '+s.borderTopColor, s.backgroundColor];})(getComputedStyle(document.getElementById('GM_config_saveBtn')))"
     t.eq(t.js(save), ['2px solid rgb(0, 117, 255)', 'rgb(255, 255, 255)'], 'Save stands out, as Download and OK')
-    t.set_field('popupHeight', '500')
+    t.set_field('popupRows', '20')
     t.click('#GM_config_closeIcon')
     t.check(not t.settings_open(), 'the Close icon closes the dialog')
     t.eq(t.stored_settings(), EMULE, 'nothing saved')
@@ -1591,7 +1575,7 @@ def two_settings_servers():
 
 
 def test_settings_disable_local(t):
-    """I-14: the row of Local has a Disable link, at the place of the Delete links of the servers and in
+    """SF-8.20: the row of Local has a Disable link, at the place of the Delete links of the servers and in
     their color, once a server is set; it is grayed out while Local is checked (the server that receives
     the links never changes without the user). Disabled, the row of Local is grayed out, its radio button
     too, and its link becomes Enable, in the color of Edit. Saved with the servers; the popup then neither
@@ -1629,7 +1613,7 @@ def test_settings_disable_local(t):
 
 
 def test_settings_disable_local_delete(t):
-    """I-14: Local disabled, deleting the checked server checks the first one left; deleting the last
+    """SF-8.20: Local disabled, deleting the checked server checks the first one left; deleting the last
     server enables Local again, and checks it. Reset enables it too."""
     settings, servers = two_settings_servers()
     t.load(settings=settings, servers=dict(servers, localDisabled=True))
@@ -1673,7 +1657,7 @@ def test_popup_position(t):
     c = t.js(CORNER)
     t.eq([c[0], c[1]], [0, 0], 'an unknown value: top left')
     t.load(settings=dict(EMULE, popupCorner='bottom-right'))
-    t.keys('x')
+    t.keys('w')
     c = t.js(CORNER)
     t.eq([c[2], c[3]], [0, 0], 'minimized: in its corner')
     t.load(settings=dict(EMULE, popupCorner='top-right'))
@@ -1704,7 +1688,7 @@ def test_view_arrows(t):
         t.keys('h')
         t.eq(t.js(help), [normal, minimized], f'{corner}: the help draws Minimize, then Maximize')
         t.keys('h')
-        t.keys('x')
+        t.keys('w')
         t.eq(t.js(arrow), ['maximize', minimized], f'{corner}: minimized, Maximize {minimized}')
         t.keys('o')
         t.eq(t.js(arrow), ['minimize', normal], f'{corner}: maximized again, Minimize {normal}')
@@ -1765,8 +1749,8 @@ def test_popup_position_settings(t):
          'Popup position: a list of the corners, in the Popup section')
     t.eq(t.js(field + "('popupScroll')"), ['Popup scrolling', ['floating=Stays in view (default)', 'static=Scrolls with the page'], 'Popup'],
          'Popup scrolling: floating or static')
-    t.eq(t.js("document.getElementById('GM_config_showServerList_var').nextElementSibling.id"), 'GM_config_popupCorner_var',
-         'after Show the server list')
+    t.eq(t.js("document.getElementById('GM_config_popupCorner_var').previousElementSibling.id"), 'GM_config_section2_var',
+         'first in the Popup section')
     t.eq(t.js("document.getElementById('GM_config_popupCorner_var').nextElementSibling.id"), 'GM_config_popupScroll_var',
          'Popup scrolling after Popup position')
     help = t.js("document.querySelector('#GM_config_popupCorner_var .help').textContent")
@@ -1809,7 +1793,7 @@ TEXTS_SHOWN = """(function(){var q=function(s){return document.querySelector(s);
 
 
 def test_language_setting(t):
-    """I-7 and SF-8.19: the setting Language, first in the General section: Browser language (default),
+    """SF-12 and SF-8.19: the setting Language, first in the General section: Browser language (default),
     English, Français, each language named in its own language; Reset sets it back to Browser language."""
     t.load(settings=dict(EMULE, language='fr'))
     t.check(t.open_settings(), 'settings dialog opened')
@@ -1830,12 +1814,12 @@ def test_language_setting(t):
 
 
 def test_language_french(t):
-    """I-7: in French, the toolbars, their tooltips, the help, the message of the closed popup and the
+    """SF-12: in French, the toolbars, their tooltips, the help, the message of the closed popup and the
     settings dialog; the letter of a shortcut underlined only when the label holds it."""
     t.load(settings=EMULE, language='fr-FR')
     shown = t.js(TEXTS_SHOWN)
     t.eq(shown, {'download': 'Télécharger', 'downloadTitle': 'Télécharger les liens cochés (Ctrl+Alt+D)',
-                 'edit': '<u>M</u>ode édition', 'close': 'Fermer (Ctrl+Alt+C)'},
+                 'edit': 'Mode édition', 'close': 'Fermer'},
          'the toolbars in French; Télécharger has no D: nothing underlined')
     t.keys('h')
     t.eq(t.js("document.querySelector('#emlHelp .emlHelpTitle').textContent"), f'Emule Linker {script_version()} — Aide', 'the help')
@@ -1855,7 +1839,7 @@ def test_language_french(t):
 
 
 def test_language_choice(t):
-    """I-7: the setting Language wins over the language of the browser; Browser language gives French
+    """SF-12: the setting Language wins over the language of the browser; Browser language gives French
     for a browser in French, English for any other language; an unknown stored value is read as Browser
     language (SF-12.2)."""
     for browser, setting, expected in (('fr-FR', 'en', '<u>D</u>ownload'), ('en-US', 'fr', 'Télécharger'),
@@ -1868,16 +1852,18 @@ def test_language_choice(t):
     t.eq(t.errors, [], 'no JavaScript error')
 
 
+TEXTS_CHECK = r"""(function(){var en=TEXTS.en, fr=TEXTS.fr, keys=function(o){return Object.keys(o).sort();},
+  names=function(s){return (s.match(/\{\w+\}/g)||[]).sort().join(',');};
+  return {missing: keys(en).filter(function(k){return !(k in fr) && !/^theme\.(?!auto$)/.test(k);}), extra: keys(fr).filter(function(k){return !(k in en);}),
+          values: keys(en).filter(function(k){return k in fr && names(en[k]) != names(fr[k]);}),
+          marks: keys(en).concat(keys(fr)).filter(function(k){return ((en[k]||'')+'').split('&').length > 2 || ((fr[k]||'')+'').split('&').length > 2;})};})()"""
+
+
 def test_texts_complete(t):
-    """I-7: every text has its French version, with the same values {name}; a label marks at most one
-    letter of shortcut (&)."""
+    """SF-12: every text has its French version, with the same values {name}, except the name of a theme, whose
+    French version is optional (SF-13.5); a label marks at most one letter of shortcut (&)."""
     t.load()
-    check = r"""(function(){var en=TEXTS.en, fr=TEXTS.fr, keys=function(o){return Object.keys(o).sort();},
-      names=function(s){return (s.match(/\{\w+\}/g)||[]).sort().join(',');};
-      return {missing: keys(en).filter(function(k){return !(k in fr);}), extra: keys(fr).filter(function(k){return !(k in en);}),
-              values: keys(en).filter(function(k){return k in fr && names(en[k]) != names(fr[k]);}),
-              marks: keys(en).concat(keys(fr)).filter(function(k){return ((en[k]||'')+'').split('&').length > 2 || ((fr[k]||'')+'').split('&').length > 2;})};})()"""
-    t.eq(t.js(check), {'missing': [], 'extra': [], 'values': [], 'marks': []}, 'the tables complete and consistent')
+    t.eq(t.js(TEXTS_CHECK), {'missing': [], 'extra': [], 'values': [], 'marks': []}, 'the tables complete and consistent')
     t.eq(t.errors, [], 'no JavaScript error')
 
 
@@ -1901,15 +1887,1354 @@ def test_control_colors(t):
     t.eq(t.errors, [], 'no JavaScript error')
 
 
+def test_colors_in_css(t):
+    """SF-2.5, SF-7.10, SF-8.1: every color of the popup, of the band of the answers and of the backdrop of
+    the settings dialog comes from the CSS of the PARAM block, where the themes change them (SF-13): none
+    is set inline by the code. The look is unchanged: the popup white, its text black, its steel blue frame
+    of 2 px, 0.97 opaque; the answers in gray, orange, green or red; the page dimmed behind the dialog."""
+    t.load(settings=EMULE)
+    style = t.js("document.getElementById('theDiv').getAttribute('style')")
+    for name in ('background', 'color', 'border', 'opacity'):
+        t.check(name not in style, f'popup: no {name} inline', style)
+    t.eq(t.js("(function(s){return [s.backgroundColor, s.color, s.borderTopWidth+' '+s.borderTopStyle+' '+s.borderTopColor,"
+              " s.opacity];})(getComputedStyle(document.getElementById('theDiv')))"),
+         ['rgb(255, 255, 255)', 'rgb(0, 0, 0)', '2px solid rgb(43, 92, 138)', '0.97'], 'popup: its look')
+    band = "document.getElementById('emlStatus')"
+    for ok, color in (('null', 'rgb(85, 85, 85)'), ("'doubt'", 'rgb(166, 95, 0)'), ('true', 'rgb(0, 102, 0)'), ('false', 'rgb(204, 0, 0)')):
+        t.js(f"showStatus('answer', {ok})")
+        t.eq([t.js(f'{band}.style.color'), t.js(f'getComputedStyle({band}).color')], ['', color], f'answer ({ok}): its color from the CSS')
+    t.open_settings()
+    backdrop = "document.getElementById('GM_config_backdrop')"
+    t.eq([t.js(f'{backdrop}.style.background'), t.js(f'getComputedStyle({backdrop}).backgroundColor')], ['', 'rgba(0, 0, 0, 0.35)'],
+         'backdrop of the settings dialog: its color from the CSS')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+THEME_LOOK = """(function(){var s=getComputedStyle(document.getElementById('theDiv'));
+  return [s.backgroundColor, s.color, s.colorScheme];})()"""
+LIGHT_LOOK = ['rgb(255, 255, 255)', 'rgb(0, 0, 0)', 'light']
+WIN11_LOOK = ['rgb(32, 32, 32)', 'rgb(230, 230, 230)', 'dark']
+SHIPPED_THEMES = [['light', 'Default light'], ['macos', 'macOS'], ['firefox', 'Firefox light'], ['mono', 'Monochrome light'],
+                  ['glass', 'Transparent glass'], ['legacy', 'Legacy'], ['win11', 'Windows 11 dark'], ['chrome', 'Chrome dark'],
+                  ['steel', 'Steel blue night'], ['oled', 'OLED black']]
+THEME_OPTIONS = "[].map.call(document.querySelectorAll('#GM_config_field_theme option'), function(o){ return [o.value, o.textContent]; })"
+
+
+def test_theme_setting(t):
+    """SF-13: the setting Theme of the General section, after Language: Automatic (default), then every theme of
+    the table THEMES, in its order, each one named in English (the ten themes of the script at least);
+    Reset puts Automatic back. A theme stored by mistake is read as Automatic."""
+    t.load(settings=EMULE)
+    t.check(t.open_settings(), 'settings dialog opened')
+    t.eq(t.js("document.getElementById('GM_config_language_var').nextElementSibling.id"), 'GM_config_theme_var', 'after Language')
+    t.eq(t.js("document.getElementById('GM_config_theme_field_label').textContent"), 'Theme', 'label')
+    names = t.js("Object.keys(THEMES)")
+    options = t.js(THEME_OPTIONS)
+    t.eq(options, [['auto', 'Automatic (default)']] + [[n, t.js(f"TEXTS.en['theme.{n}']")] for n in names],
+         'Automatic, then every theme of THEMES, in its order')
+    t.eq([x for x in options if x in SHIPPED_THEMES], SHIPPED_THEMES, 'the six light themes, then the four dark ones')
+    t.eq([n for n in names if not t.js(f"TEXTS.en['theme.{n}']")], [], 'every theme named in English')
+    t.eq(t.js("document.getElementById('GM_config_field_theme').value"), 'auto', 'Automatic by default')
+    help = t.js("document.querySelector('#GM_config_theme_var .help').textContent")
+    t.check('Windows 11 dark' in help and 'dark mode' in help, 'the help tells what Automatic takes', help)
+    t.js("document.getElementById('GM_config_field_theme').value = 'oled'")
+    t.js("document.getElementById('GM_config_resetBtn').click()")
+    t.eq(t.js("[document.getElementById('GM_config_field_theme').value,"
+              " document.getElementById('GM_config_theme_var').classList.contains('changed')]"), ['auto', True], 'Reset: Automatic back')
+    t.load(settings=dict(EMULE, theme='purple'), dark=True)
+    t.eq(t.js(THEME_LOOK), WIN11_LOOK, 'an unknown theme read as Automatic')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_theme_added(t):
+    """SF-13.5: a theme added to the table THEMES, and named in the texts, is offered by the setting Theme with
+    nothing else to change, after the others (the options of the field, made when the script starts, are asked
+    again of themeOptions()); chosen, it colors the popup."""
+    t.load(settings=EMULE)
+    t.js("THEMES.sepia = Object.assign({}, THEMES.light, { bg: '#f4ecd8' });"
+         " TEXTS.en['theme.sepia'] = 'Sepia'; TEXTS.fr['theme.sepia'] = 'Sépia'; 0")
+    options = t.js("typeof themeOptions == 'function' ? Object.entries(themeOptions()) : null")
+    t.eq(options and options[-1], ['sepia', 'Sepia'], 'the new theme offered, last')
+    t.js("theme = 'sepia'; applyTheme(); 0")
+    t.eq(t.js("getComputedStyle(document.getElementById('theDiv')).backgroundColor"), 'rgb(244, 236, 216)', 'chosen, it colors the popup')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_theme_untranslated(t):
+    """SF-13.5: a theme named in English only is offered in French under its English name; the test of the
+    texts accepts it, but not another text missing in French."""
+    t.load(settings=dict(EMULE, language='fr'))
+    t.js("THEMES.sepia = THEMES.light; TEXTS.en['theme.sepia'] = 'Sepia'; 0")
+    t.eq(t.js("Object.entries(themeOptions()).slice(-1)[0]"), ['sepia', 'Sepia'], 'offered in French under its English name')
+    t.eq(t.js("Object.entries(themeOptions())[0]"), ['auto', 'Automatique (par défaut)'], 'the other names in French')
+    t.eq(t.js(TEXTS_CHECK)['missing'], [], 'the test of the texts accepts it')
+    t.js("TEXTS.en.untranslated = 'Untranslated'; 0")
+    t.eq(t.js(TEXTS_CHECK)['missing'], ['untranslated'], 'but not another text missing in French')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_theme_help_link(t):
+    """SF-13.1, SF-8.3: the help of the setting Theme links to the section Usage of the README, which shows every
+    theme, in a new tab, in English and in French; the color of the link is the one of the links of the theme."""
+    link = ("(function (a) { return a && [a.textContent, a.href, a.target, a.rel]; })"
+            "(document.querySelector('#GM_config_theme_var .help a'))")
+    for language, before in (('en', 'Every theme is shown in the '), ('fr', 'Tous les thèmes sont montrés dans le ')):
+        t.load(settings=dict(EMULE, language=language))
+        t.check(t.open_settings(), f'{language}: settings dialog opened')
+        t.eq(t.js(link), ['README', t.js('REPOSITORY') + '#usage', '_blank', 'noopener'], f'{language}: the link to the README, in a new tab')
+        help = t.js("document.querySelector('#GM_config_theme_var .help').textContent")
+        t.check(help.endswith(before + 'README.'), f'{language}: its sentence, without the address', help)
+    t.eq(style(t, '#GM_config_theme_var .help a', 'color'), ['rgb(0, 117, 255)'], 'the color of the links of Default light')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_theme_automatic(t):
+    """SF-13: Automatic is the light theme, or Windows 11 dark when Windows or the browser is in dark mode, at the load
+    of the page, and at once when the mode changes, the page open."""
+    t.load(settings=EMULE)
+    t.eq(t.js(THEME_LOOK), LIGHT_LOOK, 'light mode: the light theme')
+    t.set_dark(True)
+    t.eq(t.js(THEME_LOOK), WIN11_LOOK, 'dark mode: Windows 11 dark, at once')
+    t.set_dark(False)
+    t.eq(t.js(THEME_LOOK), LIGHT_LOOK, 'light mode again: the light theme, at once')
+    t.load(settings=EMULE, dark=True)
+    t.eq(t.js(THEME_LOOK), WIN11_LOOK, 'dark mode at the load of the page: Windows 11 dark')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_theme_fixed(t):
+    """SF-13: a theme chosen in the settings stays whatever the mode of the system. Its colors reach every
+    screen of the script, the popup, its band, its message, its help and the settings dialog, and never the page."""
+    for name, background in (('light', 'rgb(255, 255, 255)'), ('win11', 'rgb(32, 32, 32)'), ('chrome', 'rgb(32, 33, 36)'),
+                             ('steel', 'rgb(23, 32, 43)'), ('oled', 'rgb(0, 0, 0)')):
+        for dark in (False, True):
+            t.load(settings=dict(EMULE, theme=name), dark=dark)
+            t.eq(t.js(THEME_LOOK)[0], background, f'{name}, {"dark" if dark else "light"} mode: its background')
+    t.load(settings=dict(EMULE, theme='win11'))
+    page = "[getComputedStyle(document.body).backgroundColor, getComputedStyle(document.documentElement).getPropertyValue('--eml-bg')]"
+    t.eq(t.js(page)[1], '', 'the page: no variable of the theme')
+    t.js("showStatus('answer', true)")
+    t.eq(t.js("getComputedStyle(document.getElementById('emlStatus')).backgroundColor"), 'rgb(29, 58, 38)', 'the band of the answers')
+    t.click('#emlHelpBtn')
+    t.eq(t.js("getComputedStyle(document.getElementById('emlHelp')).backgroundColor"), 'rgb(32, 32, 32)', 'the help')
+    t.press('Escape')
+    t.click('#emlClose')
+    t.eq(t.js("getComputedStyle(document.getElementById('emlMsg')).backgroundColor"), 'rgb(32, 32, 32)', 'the message of the closed popup')
+    t.press('Escape')
+    t.check(t.open_settings(), 'settings dialog opened')
+    t.eq(t.js("[getComputedStyle(document.getElementById('GM_config')).backgroundColor,"
+              " getComputedStyle(document.getElementById('GM_config')).colorScheme]"), ['rgb(32, 32, 32)', 'dark'], 'the settings dialog')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+FIRST_FONT = "(function(e){return e ? getComputedStyle(e).fontFamily.split(',')[0].replace(/[\"']/g, '').trim() : null;})"
+
+
+def test_theme_font(t):
+    """SF-13.3: the screens of the script have the font of their theme, never the one of the page: a page that
+    gives its own font to every element changes neither the popup, its buttons, its list, its band, its help,
+    its message nor the settings dialog; the edit box and the filter keep a monospace font."""
+    t.serve('/__font', '<!doctype html><meta charset="utf-8"><title>font</title>'
+            '<style>body, div, span, a, td, button, select, label, input, textarea, b, li { font-family: "Comic Sans MS", cursive; }</style>'
+            '<a href="ed2k://|file|one.cbz|1048576|ABCDEF1234567890ABCDEF1234567890|/">one</a>'
+            '<a href="ed2k://|file|two.cbz|2048576|BBCDEF1234567890ABCDEF1234567890|/">two</a>')
+    for name, font in (('light', 'Segoe UI'), ('win11', 'Segoe UI Variable Text'), ('chrome', 'system-ui')):
+        t.load('__font', settings=dict(EMULE, theme=name))
+        for selector in ('#theDiv', '#emlTop .emlAdd', '#emlTop select', '#divBody a', '#emlTop .emlCount'):
+            t.eq(t.js(f"{FIRST_FONT}(document.querySelector('{selector}'))"), font, f'{name}: {selector}')
+        t.js("showStatus('answer', true)")
+        t.eq(t.js(f"{FIRST_FONT}(document.querySelector('#emlStatus .emlStatusText'))"), font, f'{name}: the band of the answers')
+    t.load('__font', settings=dict(EMULE, theme='light'))
+    t.click('#emlHelpBtn')
+    t.eq(t.js(f"{FIRST_FONT}(document.querySelector('#emlHelp td:nth-child(2)'))"), 'Segoe UI', 'the help')
+    t.press('Escape')
+    t.click('#emlClose')
+    t.eq(t.js(f"{FIRST_FONT}(document.querySelector('#emlMsg .emlMsgText'))"), 'Segoe UI', 'the message of the closed popup')
+    t.press('Escape')
+    t.keys('o')
+    t.edit_mode()
+    t.eq(t.js(f"{FIRST_FONT}(document.querySelector('#theDiv textarea'))"), 'Consolas', 'the edit box: monospace')
+    t.check(t.open_settings(), 'settings dialog opened')
+    t.eq(t.js(f"{FIRST_FONT}(document.querySelector('#GM_config .field_label'))"), 'Segoe UI', 'the settings dialog')
+    t.eq(t.js(f"{FIRST_FONT}(document.getElementById('GM_config_field_checkFilter'))"), 'Consolas', 'the filter: monospace')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_theme_shape_icons(t):
+    """SF-13.3: the radius of the buttons and lists of the theme (3 px, 4 px for Windows 11 dark, a pill for Chrome
+    dark, square for OLED black), and its set of icons, solid or outline; Automatic draws the icons already shown
+    again in the set of the theme it takes when the mode changes."""
+    radius = "getComputedStyle(document.querySelector('#emlTop .emlAdd')).borderTopLeftRadius"
+    fill = "document.querySelector('#emlTop [data-icon=settings] svg path').getAttribute('fill')"
+    for name, expected, icons in (('light', '3px', 'currentColor'), ('win11', '4px', 'none'), ('chrome', '11px', 'none'),
+                                  ('steel', '3px', 'currentColor'), ('oled', '0px', 'currentColor')):
+        t.load(settings=dict(EMULE, theme=name))
+        t.eq([t.js(radius), t.js(fill)], [expected, icons], f'{name}: its radius and its icons')
+    t.load(settings=EMULE)
+    t.eq(t.js(fill), 'currentColor', 'Automatic, light mode: solid icons')
+    t.set_dark(True)
+    t.eq([t.js(fill), t.js("document.querySelectorAll('#theDiv svg[data-eml-icon]').length >= 4")], ['none', True],
+         'dark mode: the icons of the popup drawn again, outline')
+    t.eq(t.js("document.getElementById('emlMin').getAttribute('data-icon')"), 'minimize', 'the buttons keep their name')
+    t.set_dark(False)
+    t.eq(t.js(fill), 'currentColor', 'light mode again: solid icons')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+STYLE = """(function (sel, props) { var e = document.querySelector(sel); if (!e) { return null; }
+  var s = getComputedStyle(e); return props.map(function (p) { return s.getPropertyValue(p); }); })"""
+
+
+# the optional values of a theme (SF-13.4), and a theme without them: OLED black, its optional values removed
+OPTIONAL_VALUES = ['frameRadius', 'opacity', 'blur', 'editBg', 'editText', 'iconBtnBg', 'iconBtnLine', 'iconBtnRadius', 'iconBtnSize',
+                   'iconBtnHover', 'iconBtnActive', 'iconSize', 'minColor', 'maxColor', 'closeColor', 'closeHoverBg', 'closeActiveBg',
+                   'closeHoverColor', 'glyph', 'primaryLine', 'primaryBorder', 'primaryHoverText', 'primaryActive', 'primaryActiveRing',
+                   'ctlActive', 'ctlHoverLine', 'ctlActiveLine']
+PLAIN = (f"THEMES.plain = Object.assign({{}}, THEMES.oled); {json.dumps(OPTIONAL_VALUES)}.forEach(function (k) {{ delete THEMES.plain[k]; }});"
+         " theme = 'plain'; applyTheme(); 0")
+
+
+def style(t, selector, *props):
+    """The computed values of CSS properties of an element (None when it is missing)."""
+    return t.js(f"{STYLE}({json.dumps(selector)}, {json.dumps(list(props))})")
+
+
+def test_theme_frames(t):
+    """SF-13.4: the optional values of the frames: a theme without them keeps square frames, the popup at 97 %, no
+    blur, the edit box and the fields of the settings in the colors of the fields of the browser; Default light keeps
+    them white and rounds every frame by 4 px as the settings; Windows 11 dark gives the edit box and the fields of
+    the settings the gray of its toolbars; Transparent glass makes the popup more transparent (92 %), blurs the page
+    behind it, rounds every frame by 4 px and gives the edit box a translucent background; macOS rounds them by 12 px.
+    The band of an answer floating against the popup, minimized or closed, is rounded as the frames."""
+    look = ('opacity', 'border-top-left-radius', 'backdrop-filter')
+    t.load(settings=EMULE)
+    t.js(PLAIN)
+    t.eq(style(t, '#theDiv', *look), ['0.97', '0px', 'none'], 'a theme without these values: the popup')
+    t.edit_mode()
+    field = ("(function () { var d = document.createElement('div'); d.style.backgroundColor = 'Field';"
+             " document.getElementById('theDiv').appendChild(d); var c = getComputedStyle(d).backgroundColor; d.remove(); return c; })()")
+    t.eq(style(t, '#theDiv textarea', 'background-color'), [t.js(field)],
+         'a theme without these values: the edit box in the color of the fields of the browser (dark)')
+    t.load(settings=dict(EMULE, theme='win11'))
+    t.edit_mode()
+    t.eq(style(t, '#theDiv textarea', 'background-color', 'color'), ['rgb(43, 43, 43)', 'rgb(230, 230, 230)'], 'Windows 11 dark: the edit box')
+    t.check(t.open_settings(), 'settings dialog opened')
+    t.eq(style(t, '#GM_config_field_emuleUrl', 'background-color', 'color'), ['rgb(43, 43, 43)', 'rgb(230, 230, 230)'],
+         'Windows 11 dark: the fields of the settings as the edit box')
+    t.load(settings=dict(EMULE, theme='light'))
+    t.eq(style(t, '#theDiv', *look), ['0.97', '4px', 'none'], 'Default light: the popup rounded by 4 px')
+    t.edit_mode()
+    t.eq(style(t, '#theDiv textarea', 'background-color', 'color'), ['rgb(255, 255, 255)', 'rgb(0, 0, 0)'], 'Default light: the edit box')
+    t.load(settings=dict(EMULE, theme='glass'))
+    popup = style(t, '#theDiv', *look)
+    t.eq(popup[:2], ['0.92', '4px'], 'Transparent glass: the popup more transparent, rounded')
+    t.check(popup[2].startswith('blur(18px)'), 'Transparent glass: the page blurred behind the popup', popup[2])
+    t.edit_mode()
+    t.eq(style(t, '#theDiv textarea', 'background-color', 'color'), ['rgba(255, 255, 255, 0.8)', 'rgb(16, 16, 16)'],
+         'Transparent glass: the edit box translucent')
+    t.load(settings=dict(EMULE, theme='glass'))
+    t.click('#emlHelpBtn')
+    t.eq(style(t, '#emlHelp', 'border-top-left-radius'), ['4px'], 'Transparent glass: the help rounded')
+    t.press('Escape')
+    t.click('#emlClose')
+    t.eq(style(t, '#emlMsg', 'border-top-left-radius'), ['4px'], 'Transparent glass: the message rounded')
+    t.press('Escape')
+    t.check(t.open_settings(), 'settings dialog opened')
+    t.eq(style(t, '#GM_config', 'border-top-left-radius'), ['4px'], 'Transparent glass: the settings rounded as before')
+    t.load(settings=dict(EMULE, theme='macos'))
+    t.eq(style(t, '#theDiv', 'border-top-left-radius'), ['12px'], 'macOS: the popup rounded by 12 px')
+    for name, radius in (('plain', '0px'), ('light', '4px'), ('glass', '4px')):
+        t.load(settings=dict(EMULE, theme=name if name != 'plain' else 'oled'))
+        if name == 'plain':
+            t.js(PLAIN)
+        t.click('#emlMin')
+        t.js("STATUS_DELAY = 600000; showStatus('answer', true)")
+        t.eq(style(t, '#emlStatus.toast', 'border-top-left-radius'), [radius], f'{name}, minimized: the band of the answer rounded as the frames')
+        t.click('#emlClose')
+        t.press('Escape')
+        t.eq(style(t, '#emlStatus.toast', 'border-top-left-radius'), [radius], f'{name}, closed: the band of the answer rounded as the frames')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_theme_buttons(t):
+    """SF-13.4: the buttons of a theme shown, under the mouse and pressed. A theme without the optional values keeps
+    the look of the buttons: Close red on the background of the buttons under the mouse. Default light frames
+    Download by 2 px of blue, fills it with blue under the mouse, darker pressed, and turns Close red with a white cross
+    under the mouse; the other buttons get a steel blue border under the mouse, a light blue background pressed. Firefox light turns Close
+    red with a white cross under the mouse, darker pressed; Legacy draws the native buttons of the browser (a darker
+    border under the mouse, a lighter background pressed, Download and Save framed as the others); macOS has larger
+    buttons at the top right, its traffic lights, the symbols drawn on them. A button pressed and released away from
+    it is not clicked."""
+    t.load(settings=EMULE)
+    t.js(PLAIN)
+    t.hover('#emlClose')
+    t.eq(style(t, '#emlClose', 'background-color', 'color'), ['rgb(38, 38, 38)', 'rgb(255, 92, 92)'], 'a theme without these values: Close under the mouse')
+    t.load(settings=dict(EMULE, theme='win11'))
+    t.hover('#emlClose')
+    t.eq(style(t, '#emlClose', 'background-color', 'color'), ['rgb(196, 43, 28)', 'rgb(255, 255, 255)'], 'Windows 11 dark: Close red under the mouse')
+    t.load(settings=dict(EMULE, theme='light'))
+    t.eq(style(t, '#emlTop .emlAdd', 'border-top-width', 'border-top-color'), ['2px', 'rgb(0, 117, 255)'], 'Default light: Download')
+    t.hover('#emlTop .emlAdd')
+    t.eq(style(t, '#emlTop .emlAdd', 'background-color', 'color'), ['rgb(0, 117, 255)', 'rgb(255, 255, 255)'], 'Default light: Download under the mouse')
+    t.hold('#emlTop .emlAdd')
+    t.eq(style(t, '#emlTop .emlAdd', 'background-color'), ['rgb(0, 95, 208)'], 'Default light: Download pressed')
+    t.release_away()
+    t.hover('#emlEdit')
+    t.eq(style(t, '#emlEdit', 'border-top-color'), ['rgb(43, 92, 138)'], 'Default light: Edit mode under the mouse, a steel blue border')
+    t.hold('#emlEdit')
+    t.eq(style(t, '#emlEdit', 'background-color'), ['rgb(214, 230, 245)'], 'Default light: Edit mode pressed, a light blue background')
+    t.release_away()
+    t.eq(t.js(POPUP)[2], 0, 'Edit mode released away from it: not clicked')
+    t.hover('#emlClose')
+    t.eq(style(t, '#emlClose', 'background-color', 'color'), ['rgb(208, 0, 0)', 'rgb(255, 255, 255)'], 'Default light: Close under the mouse')
+    t.load(settings=dict(EMULE, theme='firefox'))
+    t.eq(style(t, '#emlClose', 'background-color', 'color'), ['rgba(0, 0, 0, 0)', 'rgb(21, 20, 26)'], 'Firefox light: Close without frame')
+    t.hover('#emlClose')
+    t.eq(style(t, '#emlClose', 'background-color', 'color'), ['rgb(232, 17, 35)', 'rgb(255, 255, 255)'], 'Firefox light: Close under the mouse')
+    t.hold('#emlClose')
+    t.eq(style(t, '#emlClose', 'background-color'), ['rgb(197, 15, 31)'], 'Firefox light: Close pressed')
+    t.release_away()
+    t.eq(t.js(POPUP)[0], 1, 'Close released away from it: the popup stays')
+    t.load(settings=dict(EMULE, theme='legacy'))
+    look = ('border-top-width', 'border-top-color', 'background-color')
+    t.eq(style(t, '#emlTop .emlAdd', *look), ['1px', 'rgb(118, 118, 118)', 'rgb(239, 239, 239)'], 'Legacy: Download as the other buttons')
+    t.hover('#emlTop .emlAdd')
+    t.eq(style(t, '#emlTop .emlAdd', *look), ['1px', 'rgb(79, 79, 79)', 'rgb(229, 229, 229)'], 'Legacy: under the mouse, a darker border')
+    t.hold('#emlTop .emlAdd')
+    t.eq(style(t, '#emlTop .emlAdd', *look), ['1px', 'rgb(141, 141, 141)', 'rgb(245, 245, 245)'], 'Legacy: pressed, a lighter background')
+    t.release_away()
+    t.hold('#emlClose')
+    t.eq(style(t, '#emlClose', 'border-top-color', 'background-color'), ['rgb(141, 141, 141)', 'rgb(245, 245, 245)'], 'Legacy: Close pressed')
+    t.release_away()
+    t.check(t.open_settings(), 'settings dialog opened')
+    t.eq(style(t, '#GM_config_saveBtn', 'border-top-width', 'border-top-color'), ['1px', 'rgb(118, 118, 118)'], 'Legacy: Save as the other buttons')
+    t.eq(style(t, '#GM_config_resetBtn', 'background-color', 'border-top-color'), ['rgb(239, 239, 239)', 'rgb(118, 118, 118)'],
+         'Legacy: the buttons of the settings in the colors of the theme')
+    t.load(settings=dict(EMULE, theme='macos'))
+    t.eq(style(t, '#emlClose', 'width', 'height', 'color'), ['26px', '26px', 'rgb(255, 95, 87)'], 'macOS: Close larger, a red dot')
+    t.eq(style(t, '#emlClose svg', 'width'), ['16px'], 'macOS: its icon larger')
+    t.eq(style(t, '#emlMin', 'color'), ['rgb(254, 188, 46)'], 'macOS: Minimize, a yellow dot')
+    t.eq(style(t, '#emlClose svg .eml-glyph:last-child', 'stroke'), ['rgba(0, 0, 0, 0.5)'], 'macOS: the cross drawn on the dot')
+    t.click('#emlMin')
+    t.eq(style(t, '#emlMin svg', 'color'), ['rgb(40, 200, 64)'], 'macOS: Maximize, a green dot')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_theme_icon_sets(t):
+    """SF-13.3: a set of icons lists only the icons it changes, the others being those of outline: Monochrome light
+    draws its question mark without a circle, and the other icons of outline. Each theme of the script has its set."""
+    t.load(settings=dict(EMULE, theme='mono'))
+    t.eq(t.js("document.querySelectorAll('#emlHelpBtn svg circle').length"), 1, 'Monochrome light: the question mark without a circle')
+    t.eq(t.js("icon('close') == ICONS.outline.close.replace('<svg ', '<svg data-eml-icon=\"close\" ')"), True,
+         'Monochrome light: Close taken from outline')
+    t.eq(t.js("Object.keys(THEMES).filter(function (n) { return !ICONS[THEMES[n].icons]; })"), [], 'each theme has its set of icons')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+SIZE_LOOK = """(function () { var a = document.querySelector('#divBody a'), b = document.querySelector('#emlTop .emlAdd'),
+  i = document.querySelector('#emlClose svg'), s = getComputedStyle(b);
+  return [getComputedStyle(a).fontSize, b.getBoundingClientRect().height, i.getBoundingClientRect().width, s.borderTopWidth,
+          s.borderTopLeftRadius]; })()"""
+
+
+def near(a, b):
+    return abs(a - b) < 0.1
+
+
+SECTIONS = """[].map.call(document.querySelectorAll('#GM_config .section_header_holder'), function (h) {
+  return [h.querySelector('.section_header').textContent, h.classList.contains('emlFolded')]; })"""
+
+
+def test_settings_sections(t):
+    """SF-8: the sections of the settings dialog, in their order: General, Servers, Keyboard shortcuts, Toolbars, Popup, Edit
+    box; Show a message when the popup is closed in Popup, after Popup scrolling. A click on a header, or Enter on it, folds
+    or unfolds its section, a chevron at its right; the first time, General and Servers only are unfolded (settingsUnfolded);
+    each choice is stored at once, without Save, and kept at the next opening. A wrong value unfolds its section on Save."""
+    t.load(settings=EMULE, folded=None)
+    t.check(t.open_settings(), 'settings dialog opened')
+    t.eq(t.js(SECTIONS), [['General', False], ['Servers', False], ['Keyboard shortcuts', True], ['Toolbars', True], ['Popup', True],
+                          ['Edit box', True]], 'the sections, in their order; General and Servers unfolded the first time')
+    t.eq(t.js("settingsUnfolded"), ['general', 'servers'], 'in PARAM')
+    t.eq(t.js("[].map.call(document.querySelectorAll('#GM_config .section_header_holder'), function (h) { return h.getAttribute('data-section'); })"),
+         ['general', 'servers', 'shortcuts', 'toolbars', 'popup', 'editbox'], 'each section known by the name that keeps its state')
+    t.eq(t.js("getComputedStyle(document.getElementById('GM_config_popupRows_var')).display"), 'none', 'a folded section: its fields hidden')
+    t.eq(t.js("[getComputedStyle(document.querySelector('#GM_config_section_header_0'), '::after').content,"
+              " getComputedStyle(document.querySelector('#GM_config_section_header_4'), '::after').content]"), ['"▾"', '"▸"'],
+         'the chevron: down unfolded, right folded')
+    t.eq(t.js("document.getElementById('GM_config_popupScroll_var').nextElementSibling.id"), 'GM_config_closeMessage_var',
+         'Show a message when the popup is closed: in Popup, after Popup scrolling')
+    t.eq(t.js("document.getElementById('GM_config_closeMessage_var').nextElementSibling.id"), 'GM_config_popupRows_var', 'before Max lines')
+    t.click('#GM_config_section_header_4')
+    t.eq(t.js(SECTIONS)[4], ['Popup', False], 'a click: Popup unfolded')
+    t.eq(json.loads(t.gm('settings_folded')), ['shortcuts', 'toolbars', 'editbox'], 'stored at once')
+    t.click('#GM_config_section_header_0')
+    t.js("document.getElementById('GM_config_section_header_2').dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}))")
+    t.eq([s[1] for s in t.js(SECTIONS)], [True, False, False, True, False, True], 'General folded by a click, Keyboard shortcuts unfolded by Enter')
+    t.js("document.getElementById('GM_config_closeBtn').click()")
+    t.check(t.open_settings(), 'settings dialog opened again')
+    t.eq([s[1] for s in t.js(SECTIONS)], [True, False, False, True, False, True], 'the state kept')
+    t.reload()
+    t.check(t.open_settings(), 'opened on the next page')
+    t.eq([s[1] for s in t.js(SECTIONS)], [True, False, False, True, False, True], 'kept on the next page')
+    t.js(f"{field('editRow')}.value = '0'")
+    t.js("document.getElementById('GM_config_saveBtn').click()")
+    t.eq([t.js(SECTIONS)[5][1], t.js("!!document.querySelector('#GM_config_editRow_var .error')")], [False, True],
+         'a wrong value in Edit box, folded: the section unfolded on Save, the error shown')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+SHORTCUT_ROWS = """[].map.call(document.querySelectorAll('#GM_config_shortcuts_var tr'), function (tr) {
+  var s = tr.querySelector('select'); return [tr.querySelector('th').textContent, tr.cells[1].textContent.split(s.textContent)[0], s.id.replace('GM_config_field_', ''), s.value]; })"""
+
+
+FIELD_EDGES = """(function (ids) { return ids.map(function (id) {
+  var l = document.getElementById('GM_config_' + id + '_field_label') || document.querySelector('#GM_config_' + id + '_var > label'),
+      f = document.getElementById('GM_config_field_' + id);
+  return [Math.round(l.getBoundingClientRect().right * 2) / 2, Math.round(f.getBoundingClientRect().left * 2) / 2]; }); })"""
+
+
+def test_settings_fields_aligned(t):
+    """SF-8: the labels and the fields of the server edited, inside the list of the servers, are aligned on those of the
+    other sections (they were 7 px further right: the padding of the row of the list and its border), at every size, the
+    dialog wide enough for its two columns."""
+    for size in (100, 140):
+        t.load(settings=dict(EMULE, textSize=size))
+        t.set_viewport(1800, 1000)
+        t.check(t.open_settings(), f'{size} %: settings dialog opened')
+        edges = t.js(FIELD_EDGES + "(['language', 'serverName', 'emuleUrl', 'popupRows'])")
+        t.check(all(abs(e[0] - edges[0][0]) < 0.6 and abs(e[1] - edges[0][1]) < 0.6 for e in edges),
+                f'{size} %: the labels end and the fields start at the same place in every section', edges)
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+# each list of the table of the shortcuts at least as wide as the browser makes it for its choices (None not cut), all alike
+SHORTCUT_WIDTHS = """(function () {
+  var lists = [].slice.call(document.querySelectorAll('#GM_config_shortcuts_var select'));
+  var clone = lists[0].cloneNode(true); clone.style.setProperty('width', 'auto', 'important');
+  lists[0].parentNode.appendChild(clone); var natural = clone.getBoundingClientRect().width; clone.remove();
+  var widths = lists.map(function (l) { return l.getBoundingClientRect().width; });
+  return [Math.min.apply(null, widths) >= natural - 0.5, Math.max.apply(null, widths) - Math.min.apply(null, widths) < 0.5]; })()"""
+
+
+def test_shortcut_lists_width(t):
+    """SF-9: the lists of the table of the shortcuts show None whole (Aucun in French), all of the same width (None was cut
+    by a width of 9 characters)."""
+    for language in ('en', 'fr'):
+        t.load(settings=dict(EMULE, language=language))
+        t.check(t.open_settings(), f'{language}: settings dialog opened')
+        t.eq(t.js(SHORTCUT_WIDTHS), [True, True], f'{language}: every list as wide as its choices, all alike')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_shortcuts_in_settings(t):
+    """SF-9: the letters of the keyboard shortcuts chosen in the settings, in the section Keyboard shortcuts: a row per action,
+    Ctrl+Alt+ and a list, None then A to Z, the letters of the PARAM block by default; a letter used twice is refused under
+    the field, nothing saved; a letter saved works on the next page, the old one no more, the tooltips and the menu of the
+    manager follow; None turns a shortcut off; Reset sets the letters of PARAM back."""
+    t.load(settings=EMULE)
+    t.check(t.open_settings(), 'settings dialog opened')
+    t.eq(t.js(SHORTCUT_ROWS), [['Check or uncheck all links', 'Ctrl+Alt+', 'keyCheckAll', 'A'], ['Download', 'Ctrl+Alt+', 'keyDownload', 'D'],
+                               ['Copy the links', 'Ctrl+Alt+', 'keyCopy', 'C'], ['Export (its menu)', 'Ctrl+Alt+', 'keyExport', ''],
+                               ['Edit mode / Normal mode', 'Ctrl+Alt+', 'keyEditMode', ''], ['Settings', 'Ctrl+Alt+', 'keySettings', 'S'],
+                               ['Help', 'Ctrl+Alt+', 'keyHelp', 'H'], ['Switch view (maximized, minimized, closed)', 'Ctrl+Alt+', 'keyView', 'W'],
+                               ['Close the popup', 'Ctrl+Alt+', 'keyClose', ''], ['Open the popup', 'Ctrl+Alt+', 'keyOpen', 'O'],
+                               ['Debug traces (on / off)', 'Ctrl+Alt+', 'keyDebug', '']], 'a row per action, the letters of PARAM')
+    t.eq(t.js("[].map.call(document.querySelectorAll('#GM_config_field_keyCopy option'), function (o) { return o.textContent; }).join('')"),
+         'None' + 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'None, then A to Z')
+    t.js(f"{field('keyCopy')}.value = 'D'")
+    t.js("document.getElementById('GM_config_saveBtn').click()")
+    t.pump(0.5)
+    t.eq([t.settings_open(), t.js("(document.querySelector('#GM_config_keyCopy_var .error') || {}).textContent")],
+         [True, 'Already the shortcut of Download'], 'a letter used twice: refused, nothing saved')
+    t.js(f"{field('keyCopy')}.value = 'K'; {field('keyClose')}.value = 'Q'; {field('keyCheckAll')}.value = ''")
+    t.js("document.getElementById('GM_config_saveBtn').click()")
+    t.pump(1)
+    t.eq([t.stored_settings().get(k) for k in ('keyCopy', 'keyClose', 'keyCheckAll')], ['K', 'Q', ''], 'saved')
+    t.js(EXPORT_CATCH)
+    t.keys('c')
+    t.eq(t.js('window.__copied'), [], 'Ctrl+Alt+C: nothing any more')
+    t.keys('k')
+    t.eq(len(t.js('window.__copied')), 1, 'Ctrl+Alt+K copies')
+    t.keys('a')
+    t.eq(t.js("document.querySelectorAll('#divBody input.smallcheck:checked').length"), 9, 'None: Ctrl+Alt+A does nothing')
+    t.eq(t.js("document.getElementById('emlClose').title"), 'Close (Ctrl+Alt+Q)', 'the tooltips follow')
+    t.keys('q')
+    t.eq(t.js("!!document.getElementById('theDiv')"), False, 'Ctrl+Alt+Q closes the popup')
+    t.press('Escape')
+    t.check(t.open_settings(), 'settings dialog opened again')
+    t.js("document.getElementById('GM_config_resetBtn').click()")
+    t.eq([t.js(f"{field(k)}.value") for k in ('keyCopy', 'keyClose', 'keyCheckAll')], ['C', '', 'A'], 'Reset: the letters of PARAM')
+    t.eq(t.js("document.getElementById('GM_config_keyCopy_var').classList.contains('changed')"), True, 'highlighted')
+    t.load(settings=dict(EMULE, keySettings='P', keyHelp='p', keyOpen='?'))
+    t.eq(t.js("[shortcuts.settings, shortcuts.help, shortcuts.open]"), ['P', '', ''], 'P for Settings; p, taken by Settings, and ?: none')
+    t.eq([k in t.js('Object.keys(window.__GM_menu)') for k in 'pso'], [True, False, False], 'the menu of the manager follows')
+    t.load(settings=dict(EMULE, keySettings='T'))
+    t.eq(t.js("[window.__GM_menu.t === setButton, Object.keys(window.__GM_menu).filter(function (k) { return window.__GM_menu[k] === debugButton; })]"),
+         [True, ['undefined']], 'T for Settings: the debug traces leave it, without an access key')
+    t.load(settings=dict(EMULE, keyDebug='G'))
+    t.eq(t.js("[window.__GM_menu.g === debugButton, 't' in window.__GM_menu]"), [True, False], 'the debug traces take the letter of their shortcut')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_texts_of_the_shortcuts(t):
+    """SF-9, SF-10.4, SF-11: the texts that name a keyboard shortcut are built from the shortcuts that exist, in English and
+    French: the message of the closed popup, the help of Close, the help of Default popup view; a shortcut set to None is
+    not named, and the sentence stays right (it showed "press , or" before)."""
+    help_row = ("[].map.call(document.querySelectorAll('#emlHelp .emlHelpRows tr'), function (tr) { return tr.cells[1].textContent; })"
+                ".filter(function (s) { return /^(Closes|Ferme) /.test(s); })[0]")
+    items = "[].map.call(document.querySelectorAll('#emlMsg .emlMsgText li'), function (li) { return li.textContent; })"
+    view_help = "document.querySelector('#GM_config_popupView_var .help').textContent"
+    none = dict(keyOpen='', keyView='', keySettings='')
+    cases = [
+        ('en', {}, ['press Ctrl+Alt+O, or', 'press Ctrl+Alt+W, or', 'choose Open Popup in the menu of Tampermonkey.'],
+         'Closes the popup on this page; Ctrl+Alt+O opens it again',
+         'can then be opened only with the keyboard shortcuts (Ctrl+Alt+O or Ctrl+Alt+W: the popup, Ctrl+Alt+S: this dialog) or from the menu of'),
+        ('en', none, ['choose Open Popup in the menu of Tampermonkey.'], 'Closes the popup on this page',
+         'can then be opened only from the menu of'),
+        ('en', dict(keyOpen=''), ['press Ctrl+Alt+W, or', 'choose Open Popup in the menu of Tampermonkey.'], 'Closes the popup on this page',
+         'can then be opened only with the keyboard shortcuts (Ctrl+Alt+W: the popup, Ctrl+Alt+S: this dialog) or from the menu of'),
+        ('fr', {}, ['appuyez sur Ctrl+Alt+O, ou', 'appuyez sur Ctrl+Alt+W, ou', 'choisissez Ouvrir la popup dans le menu de Tampermonkey.'],
+         'Ferme la popup sur cette page ; Ctrl+Alt+O la rouvre',
+         'ne s\'ouvrent alors que par les raccourcis clavier (Ctrl+Alt+O ou Ctrl+Alt+W : la popup, Ctrl+Alt+S : ces réglages) ou par le menu de'),
+        ('fr', none, ['choisissez Ouvrir la popup dans le menu de Tampermonkey.'], 'Ferme la popup sur cette page',
+         'ne s\'ouvrent alors que par le menu de'),
+    ]
+    for language, keys, closed, close_help, view in cases:
+        name = f'{language}, {", ".join(k for k in keys) or "every shortcut"}'
+        t.load(settings=dict(EMULE, language=language, **keys))
+        t.click('#emlHelpBtn')
+        t.eq(t.js(help_row), close_help, f'{name}: the help of Close')
+        t.press('Escape')
+        t.click('#emlClose')
+        t.eq(t.js(items), closed, f'{name}: the message of the closed popup')
+        t.press('Escape')
+        t.js('setButton()')     # as its button: Ctrl+Alt+S may be None
+        t.pump(0.5)
+        t.check(t.settings_open(), f'{name}: settings dialog opened')
+        text = t.js(view_help)
+        t.check(view in text and '``' not in text and '()' not in text, f'{name}: the help of Default popup view', text)
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_size_slider(t):
+    """SF-2.5: Size, in the General section after Theme, a slider from 80 % to 160 % by steps of 10 % (SIZE_MIN, SIZE_MAX,
+    SIZE_STEP), its value at its right, 100 % (default); saved, the screens follow; Reset puts 100 % back; a value out of
+    the range or of the steps, or a name of the first trials (medium), is read as 100 %, stored once."""
+    value = "[document.getElementById('GM_config_field_textSize').value, document.getElementById('GM_config_textSizeValue').textContent]"
+    t.load(settings=EMULE)
+    t.check(t.open_settings(), 'settings dialog opened')
+    t.eq(t.js("document.getElementById('GM_config_theme_var').nextElementSibling.id"), 'GM_config_textSize_var', 'after Theme')
+    t.eq(t.js("(function(f){return [f.type, f.min, f.max, f.step];})(document.getElementById('GM_config_field_textSize'))"),
+         ['range', '80', '160', '10'], 'a slider, 80 to 160 by 10')
+    t.eq(t.js('[SIZE_MIN, SIZE_MAX, SIZE_STEP]'), [80, 160, 10], 'in PARAM')
+    t.eq(t.js(value), ['100', '100 % (default)'], '100 % by default')
+    t.js("var f = document.getElementById('GM_config_field_textSize'); f.value = 120; f.dispatchEvent(new Event('input'))")
+    t.eq(t.js(value), ['120', '120 %'], 'moved: its value follows')
+    t.js("document.getElementById('GM_config_saveBtn').click()")
+    t.pump(1)
+    t.eq([t.stored_settings().get('textSize'), t.js('sizeFactor()'), t.js(SIZE_LOOK)[0]], [120, 1.2, '12px'], 'saved: the popup at 120 %')
+    t.check(t.open_settings(), 'settings dialog opened again')
+    t.eq(t.js(value), ['120', '120 %'], 'the slider at 120 %')
+    t.js("document.getElementById('GM_config_resetBtn').click()")
+    t.eq(t.js(value), ['100', '100 % (default)'], 'Reset: 100 %')
+    for wrong in ('medium', 85, 200):
+        t.load(settings=dict(EMULE, textSize=wrong))
+        t.eq([t.js(SIZE_LOOK)[0], t.stored_settings().get('textSize')], ['10px', 100], f'{wrong!r}: read as 100 %, stored once')
+    t.load(settings=dict(EMULE, language='fr', textSize=140))
+    t.check(t.open_settings(), 'settings dialog opened, in French')
+    t.eq(t.js(value), ['140', '140 %'], 'in French')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_size_scale(t):
+    """SF-2.5: the size multiplies every length of 3 px or more of the screens of the script by its factor (1, 1.2,
+    1.4): the text of the list (10, 12, 14 px), the height of the buttons (22 px at Small), their icons (12 px), the
+    radius of the theme (3 px for Default light); the borders of 1 and 2 px stay thin. The help, the message of the
+    closed popup and the settings dialog follow; so do the sizes given by a theme (the buttons of macOS, 26 px)."""
+    for name, factor in ((100, 1), (120, 1.2), (140, 1.4)):
+        t.load(settings=dict(EMULE, textSize=name))
+        font, height, icon, border, radius = t.js(SIZE_LOOK)
+        t.eq(font, f'{round(10 * factor)}px', f'{name}: the text of the list')
+        t.check(near(height, 22 * factor) and near(icon, 12 * factor), f'{name}: the buttons and their icons', [height, icon])
+        t.eq([border, radius], ['2px', f'{round(3 * factor, 2):g}px'], f'{name}: the border of Download stays, its radius follows')
+        t.click('#emlHelpBtn')
+        t.eq(t.js("getComputedStyle(document.querySelector('#emlHelp td:nth-child(2)')).fontSize"), f'{round(12 * factor, 2):g}px',
+             f'{name}: the help')
+        t.press('Escape')
+        t.click('#emlClose')
+        t.eq(t.js("getComputedStyle(document.querySelector('#emlMsg .emlMsgText')).fontSize"), f'{round(12 * factor, 2):g}px',
+             f'{name}: the message of the closed popup')
+        t.press('Escape')
+        t.check(t.open_settings(), f'{name}: settings dialog opened')
+        t.eq(t.js("getComputedStyle(document.querySelector('#GM_config .field_label')).fontSize"), f'{round(12 * factor, 2):g}px',
+             f'{name}: the settings dialog')
+    t.load(settings=dict(EMULE, theme='macos', textSize=140))
+    t.check(near(t.js("document.getElementById('emlClose').getBoundingClientRect().width"), 26 * 1.4), 'macOS, Large: its buttons follow',
+            t.js("document.getElementById('emlClose').getBoundingClientRect().width"))
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_size_lists_in_characters(t):
+    """SF-6.11: the widths of the category list and of the server list are given in characters: they follow the size."""
+    width = "parseFloat(getComputedStyle(document.querySelector('#emlTop .emlCat')).minWidth)"
+    t.eq(t.js("[categoryListMinWidth, categoryListMaxWidth, serverListMaxWidth]"), [16, 22, 22], 'in characters, in PARAM')
+    t.load(settings=dict(EMULE, emuleCat='*default=0;Video=2'))
+    small = t.js(width)
+    t.load(settings=dict(EMULE, emuleCat='*default=0;Video=2', textSize=140))
+    large = t.js(width)
+    t.check(small > 80 and abs(large / small - 1.4) < 0.02, 'the min width of the category list follows the size', [small, large])
+    t.eq(t.js("getComputedStyle(document.querySelector('#emlTop .emlCat')).maxWidth.slice(-2)"), 'px', 'computed in pixels')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_popup_rows_cols(t):
+    """SF-2.3: the maximum height of the popup in lines of its list (popupRows): the list shows that many lines, and
+    scrolls beyond, at every size; 0 shows every line. The maximum width in characters of the list (popupCols)."""
+    rows = """(function () { var l = document.getElementById('divBody'), r = l.querySelectorAll('tr');
+      return [l.clientHeight / r[1].getBoundingClientRect().height, l.scrollHeight > l.clientHeight + 1]; })()"""
+    for size in (100, 140):
+        t.load(settings=dict(EMULE, popupRows=4, textSize=size))
+        shown, scrolls = t.js(rows)
+        t.check(abs(shown - 4) < 0.1 and scrolls, f'{size}: four lines, the list scrolls', [shown, scrolls])
+    t.load(settings=dict(EMULE, popupRows=0))
+    t.eq(t.js(rows)[1], False, '0: every line')
+    t.load(settings=dict(EMULE, popupCols=40))
+    ch = ("(function () { var d = document.getElementById('theDiv'), p = document.createElement('span');"
+          " p.style.cssText = 'display:inline-block;width:40ch'; d.appendChild(p); var w = p.getBoundingClientRect().width; p.remove();"
+          " return [parseFloat(getComputedStyle(d).width), w]; })()")
+    width, limit = t.js(ch)
+    t.check(width <= limit + 0.5, 'the popup no wider than 40 characters of its list, its margins and frame apart', [width, limit])
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_popup_rows_cols_migration(t):
+    """SF-8: the maximum height and width of the popup, stored in pixels before 0.15 (popupHeight, popupWidth), are
+    converted once in lines and characters: 800 px give 43 lines and 148 characters; 0 stays unlimited; a width too
+    small gives the minimum, 35 characters (POPUP_COLS_MIN)."""
+    t.load(settings=dict(EMULE, popupHeight=800, popupWidth=800))
+    t.eq([t.stored_settings().get(k) for k in ('popupRows', 'popupCols')], [43, 148], '800 px: 43 lines, 148 characters')
+    t.load(settings=dict(EMULE, popupHeight=0, popupWidth=50))
+    t.eq([t.stored_settings().get(k) for k in ('popupRows', 'popupCols')], [0, 35], 'unlimited stays, a small width gives the minimum, 35')
+    t.load(settings=dict(EMULE, popupRows=12, popupHeight=800))
+    t.eq(t.stored_settings().get('popupRows'), 12, 'converted once: a number of lines already stored is kept')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_settings_narrow(t):
+    """SF-8: in a narrow window (a phone, 390 px), the settings dialog fits in it: no part out of it, each label
+    above its field, the rows of the servers on several lines."""
+    t.load(settings=EMULE)     # a page first: WebDriver BiDi sets no viewport before (the test may run first)
+    t.set_viewport(390, 844)
+    try:
+        t.load(settings=EMULE)
+        t.check(t.open_settings(), 'settings dialog opened')
+        t.eq(t.js("(function (d) { return [d.scrollWidth <= d.clientWidth + 1, d.getBoundingClientRect().right <= innerWidth]; })"
+                  "(document.getElementById('GM_config'))"), [True, True], 'nothing out of the dialog, the dialog in the window')
+        t.eq(t.js("(function () { var l = document.getElementById('GM_config_theme_field_label').getBoundingClientRect(),"
+                  " f = document.getElementById('GM_config_field_theme').getBoundingClientRect(); return l.bottom <= f.top + 0.5; })()"),
+             True, 'the label above its field')
+    finally:
+        t.clear_viewport()
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+FOLD = """(function () { var d = document.getElementById('theDiv'), bars = d.querySelectorAll('.toolbar');
+  var names = {emlEditBtn: 'edit', emlSrv: 'server', emlCat: 'category', emlExport: 'export', emlDrag: 'space'};
+  var hidden = function (c) { return getComputedStyle(c).display == 'none'; };
+  return {folded: (hidden(document.getElementById('emlMenuBtn')) ? [] : ['menu']).concat([].concat.apply([], [].map.call(bars, function (b) {
+            return [].filter.call(b.children, function (c) { return !c.classList.contains('emlOff') && !c.classList.contains('emlIcon') && hidden(c); }).map(function (c) {
+              var n = Object.keys(names).filter(function (k) { return c.classList.contains(k); })[0];
+              return b.id.replace('eml', '').toLowerCase() + '.' + (names[n] || c.id || c.className); }); }))),
+          data: d.dataset.folded, menu: document.getElementById('emlMenuBtn').getClientRects().length > 0,
+          stay: [].every.call(d.querySelectorAll('.toolbar > .checkall, .toolbar > .emlCount, .toolbar > .emlAdd:not(.emlOff)'),
+                              function (c) { return getComputedStyle(c).display != 'none'; }),
+          overflow: [].some.call(bars, function (b) { return b.getClientRects().length && b.scrollWidth > b.clientWidth + 1; }),
+          add: document.querySelector('#emlTop .emlAdd').getBoundingClientRect().width,
+          drag: document.querySelector('#emlTop .emlDrag').getBoundingClientRect().width,
+          help: document.getElementById('emlHelpBtn').getBoundingClientRect().width}; })()"""
+MENU_ROWS = """[].map.call(document.querySelectorAll('#emlMenu .emlMenuRow'), function (r) {
+  return r.tagName == 'LABEL' ? r.firstChild.textContent : r.querySelector('.emlMenuText').textContent; })"""
+# the commands of the menu of Export, in their order (SF-14)
+EXPORT_ROWS = ['Copy the links', 'eMule collection (.emulecollection)', 'CSV (.csv)', 'Text, one link per line (.txt)']
+
+
+FOLD_ORDER = {'top': ['top.server', 'top.category', 'top.space'], 'bottom': ['bottom.edit', 'bottom.export', 'bottom.server', 'bottom.category']}
+
+
+def fold_narrowing(t, orders=FOLD_ORDER):
+    """The folding as the window narrows, checked at each width: the menu button first, then in each toolbar its
+    controls one by one from left to right (orders), never the check box, the counter nor Download, no control
+    narrowed, the free space kept until folded, no toolbar cut before everything is folded; the folding of each
+    width, from the widest."""
+    wide = t.js(FOLD)
+    seen = []
+    for width in range(640, 150, -10):
+        t.set_viewport(width, 700)
+        t.pump(0.2)
+        now = t.js(FOLD)
+        folded = now['folded']
+        seen.append(folded)
+        if folded and folded[0] != 'menu':
+            t.check(False, f'{width} px: the menu button first', folded)
+        if (now.get('data') or '') != ' '.join(folded):
+            t.check(False, f'{width} px: what is folded, told by the popup (data-folded)', now)
+        for bar, order in orders.items():
+            mine = [f for f in folded if f.startswith(bar + '.')]
+            if mine != order[:len(mine)]:
+                t.check(False, f'{width} px: the {bar} toolbar folded from left to right', folded)
+        if not now['stay']:
+            t.check(False, f'{width} px: the check box, the counter and Download never folded', now)
+        if now['overflow'] and len(folded) < 1 + sum(len(o) for o in orders.values()):
+            t.check(False, f'{width} px: no toolbar cut', now)
+        if abs(now['add'] - wide['add']) > 0.5 or (not folded and abs(now['help'] - wide['help']) > 0.5):
+            t.check(False, f'{width} px: the controls keep their width', [now, wide])
+        if 'top.space' not in folded and now['drag'] < 23.5:
+            t.check(False, f'{width} px: the free space kept to move the popup', now)
+    t.check(all(set(a) <= set(b) for a, b in zip(seen, seen[1:])), 'the folding only goes on as the window narrows', seen)
+    return seen
+
+
+def test_toolbars_fold(t):
+    """SF-2.13: as soon as a toolbar does not fit in the popup, the menu button takes the place of the buttons at the
+    top right; then, while a toolbar does not fit, its controls go one by one into the menu, from left to right (Edit
+    mode, the server list, the category list), each toolbar on its own; at last, the free space of the top toolbar,
+    kept until then (24 px at least) to move the popup. The check box, the counter and Download stay; no control is
+    narrowed, no toolbar cut on the way. A wider window shows them again."""
+    servers = two_servers()
+    t.load(settings=settings_of(servers), servers=servers)
+    wide = t.js(FOLD)
+    t.eq([wide['folded'], wide['menu'], wide['overflow']], [[], False, False], 'wide enough: every control, no menu button')
+    try:
+        seen = fold_narrowing(t)
+        t.check(any('bottom.edit' in f and 'bottom.server' not in f for f in seen),
+                'Edit mode of the bottom toolbar folded before its server list (from left to right)', seen)
+        t.check({'menu', 'top.server', 'top.category', 'bottom.edit', 'bottom.export', 'bottom.server', 'bottom.category'} <= set(seen[-1]),
+                'at last, every control folded', seen[-1])
+    finally:
+        t.clear_viewport()
+    t.pump(0.3)
+    t.eq(t.js(FOLD)['folded'], [], 'the window wide again: every control back')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_toolbars_fold_each(t):
+    """SF-2.13: each toolbar folds on its own: a toolbar that fits keeps its controls while the other one folds; the
+    bottom toolbar alone too wide puts the menu button in place of the buttons at the top right first. A list folded
+    in one toolbar and shown in the other is in the menu."""
+    servers = two_servers()
+    base = settings_of(servers)
+    try:
+        # the bottom toolbar holding Download only: it always fits, the top one folds
+        t.load(settings=dict(base, tbEditBottom='none', tbExportBottom='none', tbServerBottom='none', tbCategoryBottom='none'), servers=servers)
+        seen = fold_narrowing(t, {'top': FOLD_ORDER['top'], 'bottom': []})
+        t.check(any('top.category' in f for f in seen), 'the top toolbar folded', seen)
+        t.check(not any(f.startswith('bottom.') for s in seen for f in s), 'the bottom toolbar, which fits, not folded', seen)
+        t.clear_viewport()
+        # the top toolbar without lists: the bottom one folds alone, after the menu button
+        t.load(settings=dict(base, tbServerTop='none', tbCategoryTop='none'), servers=servers)
+        seen = fold_narrowing(t, {'top': ['top.space'], 'bottom': FOLD_ORDER['bottom']})
+        first = next(s for s in seen if s)
+        t.check(first[0] == 'menu' and not any(f.startswith('top.') for f in first),
+                'the bottom toolbar too wide, the top one fitting: the menu button in place of the buttons at the top right', first)
+        t.check(any('bottom.category' in s for s in seen), 'the bottom toolbar folded', seen)
+        t.clear_viewport()
+        # a list folded at the bottom, still shown at the top (a top toolbar without category list): in the menu anyway, once
+        t.load(settings=dict(base, tbCategoryTop='none'), servers=servers)
+        for width in range(800, 150, -10):
+            t.set_viewport(width, 700)
+            t.pump(0.2)
+            folded = t.js(FOLD)['folded']
+            if 'bottom.server' in folded and 'top.server' not in folded:
+                break
+        t.check('bottom.server' in folded and 'top.server' not in folded, f'{width} px: the server list folded at the bottom only', folded)
+        t.click('#emlMenuBtn')
+        t.eq(t.js(MENU_ROWS).count('Server'), 1, 'in the menu, once')
+    finally:
+        t.clear_viewport()
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_popup_in_narrow_window(t):
+    """SF-2.3: in a window narrower than the popup, the popup keeps in it, its padding and its frame included, at
+    every size: nothing of it, its buttons included, is out of the window (it went 14 px out of it before). Limited by the
+    window, it takes its whole width: its frame stays 2 px on each side at every size (at 140 %, it was 1.6 px narrower)."""
+    try:
+        for size in (100, 140):
+            for width in (360, 250):
+                t.load(settings=dict(EMULE, textSize=size))
+                t.set_viewport(width, 700)
+                t.pump(0.3)
+                edges = t.js("(function(){var r=document.getElementById('theDiv').getBoundingClientRect(),"
+                             " b=document.getElementById('emlMenuBtn').getBoundingClientRect();"
+                             " return [r.right <= document.documentElement.clientWidth + 0.5, b.right <= r.right + 0.5];})()")
+                t.eq(edges, [True, True], f'{size}, {width} px: the popup and its menu button in the window')
+                whole = t.js("(function(){var d=document.getElementById('theDiv'), r=d.getBoundingClientRect();"
+                             " return d.style.minWidth ? null : Math.abs(r.width - document.documentElement.clientWidth) < 0.5;})()")
+                if width == 250:    # narrower than the list: the window limits the popup
+                    t.check(whole is not False, f'{size}, {width} px: the popup as wide as the window', whole)
+    finally:
+        t.clear_viewport()
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+MENU_REACHABLE = """(function () { var r = document.getElementById('theDiv').getBoundingClientRect();
+  return ['emlMenuBtn', 'GM_none'].concat([].map.call(document.querySelectorAll('#emlTop [data-icon=settings]'), function () { return 'settings'; }))
+    .some(function (id) { var e = id == 'settings' ? document.querySelector('#emlTop [data-icon=settings]') : document.getElementById(id);
+      if (!e) { return false; } var b = e.getBoundingClientRect(); return b.width > 0 && b.left >= r.left - 0.5 && b.right <= r.right + 0.5; }); })()"""
+
+
+TB_TABLE = """(function () { var t = document.querySelector('#GM_config_toolbars_var table.emlToolbars'); if (!t) { return null; }
+  return [].map.call(t.querySelectorAll('tr:not(.top):not(#GM_config_tbForced)'), function (r) {
+    return [r.querySelector('th').firstChild.textContent].concat([].map.call(r.querySelectorAll('td'), function (c) {
+      var s = c.querySelector('select'); return s ? s.id.replace('GM_config_field_', '') + '=' + s.value : c.textContent; })); }); })()"""
+TB_OPTIONS = "(function(id){return [].map.call(document.getElementById('GM_config_field_'+id).options,function(o){return o.value+'='+o.text;});})"
+TB_FIELD = "document.getElementById('GM_config_field_{}')"
+
+
+def tb_set(t, field, value):
+    t.js(f"var s = {TB_FIELD.format(field)}; s.value = '{value}'; s.dispatchEvent(new Event('change'))")
+
+
+def test_toolbar_settings(t):
+    """SF-2.14: the table Toolbars of the Popup section, first in it, in place of the checkboxes Show the category list and
+    Show the server list: a row per control, from left to right as in the toolbars, a column per toolbar; Shown, In the
+    menu, Not shown at the top, Shown, Not shown at the bottom; Edit mode not shown at the top by default. As soon as a
+    control of the top toolbar is in the menu, the buttons at the top right are too: their list grayed out, a note under
+    it; the choice of the user comes back without it, and is the one saved. Reset sets the defaults back, highlighted;
+    narrow, the table is stacked."""
+    t.load(settings=EMULE)
+    t.check(t.open_settings(), 'settings dialog opened')
+    t.eq(t.js("document.querySelector('#GM_config_toolbars_var .field_label').textContent"), '', 'no label: the title of its section')
+    t.eq(t.js("document.getElementById('GM_config_toolbars_var').closest('.section_header_holder').querySelector('.section_header').textContent"),
+         'Toolbars', 'in its own section, Toolbars')
+    t.eq(t.js("document.querySelector('#GM_config_toolbars_var .order').textContent"), 'From left to right, as in the toolbars', 'its order told')
+    t.eq(t.js(TB_TABLE), [['Check box and counter', 'Always shown', 'Always shown'], ['Edit mode', 'tbEditTop=none', 'tbEditBottom=shown'],
+                          ['Export', 'tbExportTop=none', 'tbExportBottom=shown'],
+                          ['Server list', 'tbServerTop=shown', 'tbServerBottom=shown'], ['Category list', 'tbCategoryTop=shown', 'tbCategoryBottom=shown'],
+                          ['Download', 'Always shown', 'tbDownloadBottom=shown'], ['Buttons at the top right', 'tbButtonsTop=shown', '\u2014']],
+         'a row per control, from left to right, its defaults')
+    t.eq([t.js(TB_OPTIONS + f"('{f}')") for f in ('tbServerTop', 'tbServerBottom', 'tbButtonsTop')],
+         [['shown=Shown', 'menu=In the menu \u2630', 'none=Not shown'], ['shown=Shown', 'none=Not shown'], ['shown=Shown', 'menu=In the menu \u2630']],
+         'the choices at the top, at the bottom, of the buttons at the top right')
+    help = t.js("document.querySelector('#GM_config_toolbars_var .help').textContent")
+    t.check('two choices' in help and 'fewer than two categories' in help and 'not used' in help, 'its help', help)
+    forced = f"[{TB_FIELD.format('tbButtonsTop')}.value, {TB_FIELD.format('tbButtonsTop')}.disabled, document.getElementById('GM_config_tbForced').hidden]"
+    t.eq(t.js(forced), ['shown', False, True], 'the buttons at the top right: shown, free')
+    tb_set(t, 'tbServerTop', 'menu')
+    t.eq(t.js(forced), ['menu', True, False], 'the server list in the menu: the buttons follow, grayed out, a note')
+    tb_set(t, 'tbServerTop', 'shown')
+    t.eq(t.js(forced), ['shown', False, True], 'back: their own choice again')
+    tb_set(t, 'tbEditTop', 'shown')
+    t.js("document.getElementById('GM_config_resetBtn').click()")
+    t.eq([t.js(TB_FIELD.format('tbEditTop') + '.value'), t.js("document.getElementById('GM_config_tbEditTop_var').classList.contains('changed')")],
+         ['none', True], 'Reset: the default back, highlighted')
+    tb_set(t, 'tbCategoryTop', 'menu')
+    tb_set(t, 'tbDownloadBottom', 'none')
+    t.js("document.getElementById('GM_config_saveBtn').click()")
+    t.pump(1)
+    t.eq([t.stored_settings().get(k) for k in ('tbCategoryTop', 'tbDownloadBottom', 'tbButtonsTop')], ['menu', 'none', 'shown'],
+         'saved, the buttons at the top right with their own choice')
+    t.load(settings=EMULE)
+    try:
+        t.set_viewport(390, 800)
+        t.pump(0.2)
+        t.check(t.open_settings(), 'settings dialog opened in a narrow window')
+        t.eq(t.js("[getComputedStyle(document.getElementById('GM_config_tbServerTop_var')).display,"
+                  " getComputedStyle(document.querySelector('#GM_config_toolbars_var tr.top td.head')).display]"), ['grid', 'none'],
+             'narrow: stacked, one line per toolbar')
+    finally:
+        t.clear_viewport()
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_toolbar_choices(t):
+    """SF-2.14: the popup follows the choices of the settings. Edit mode shown at the top: after the counter, it switches
+    the mode. The server list in the menu: gone from the top toolbar, kept at the bottom, the menu button in place of the
+    buttons at the top right, the menu holding the server list then these buttons. The buttons alone in the menu: the menu
+    holds them only. Download not shown at the bottom. In a narrow popup, a list shown at the bottom only goes into the
+    menu when folded."""
+    servers = two_servers()
+    base = settings_of(servers)
+    shown = "(function(id){var e=document.getElementById(id); return e ? getComputedStyle(e).display != 'none' : null;})"
+    t.load(settings=dict(base, tbEditTop='shown'), servers=servers)
+    t.eq([c[0] for c in t.js(BAR + "('emlTop')")][:4], ['checkall', 'emlCount', 'emlEditTop', 'srv'], 'Edit mode at the top, after the counter')
+    t.click('#emlEditTop')
+    t.eq(t.js(POPUP)[2], 1, 'it switches to edit mode')
+    t.load(settings=dict(base, tbServerTop='menu'), servers=servers)
+    t.eq([t.js(f"{shown}('{i}')") for i in ('srv', 'srv2', 'emlMenuBtn', 'emlClose', 'emlHelpBtn')], [False, True, True, False, False],
+         'the server list in the menu: not at the top, at the bottom; the menu button in place of the buttons')
+    t.click('#emlMenuBtn')
+    t.eq(t.js(MENU_ROWS), ['Server', 'Settings', 'Help', 'Minimize', 'Close'], 'the menu: the server list, then the buttons')
+    t.press('Escape')
+    t.load(settings=dict(base, tbButtonsTop='menu'), servers=servers)
+    t.click('#emlMenuBtn')
+    t.eq(t.js(MENU_ROWS), ['Settings', 'Help', 'Minimize', 'Close'], 'the buttons alone in the menu')
+    t.press('Escape')
+    t.load(settings=dict(base, tbDownloadBottom='none'), servers=servers)
+    t.eq([t.js("getComputedStyle(document.querySelector('#emlTop .emlAdd')).display"), t.js("getComputedStyle(document.querySelector('#emlBottom .emlAdd')).display")],
+         ['block', 'none'], 'Download not shown at the bottom, always at the top')
+    t.load(settings=dict(base, tbServerTop='none'), servers=servers)
+    try:
+        for width in range(800, 200, -10):      # the widest window where the server list of the bottom toolbar is folded
+            t.set_viewport(width, 700)
+            t.pump(0.2)
+            if 'bottom.server' in t.js(FOLD)['folded']:
+                break
+        t.click('#emlMenuBtn')
+        t.eq(t.js(MENU_ROWS)[:1], ['Server'], 'the server list shown at the bottom only: in the menu once folded')
+    finally:
+        t.clear_viewport()
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_toolbar_settings_migration(t):
+    """SF-2.14: the checkboxes of 0.14, Show the category list and Show the server list, unchecked, become the lists shown
+    nowhere, stored once; checked, nothing changes."""
+    t.load(settings=dict(EMULE, showCategories=False, showServerList=False))
+    t.eq([t.stored_settings().get(k) for k in ('tbServerTop', 'tbServerBottom', 'tbCategoryTop', 'tbCategoryBottom')], ['none'] * 4,
+         'unchecked: shown nowhere')
+    t.eq([t.js(CAT_LISTS), t.js(SRV_LISTS)], [[], []], 'no list')
+    t.load(settings=dict(EMULE, showCategories=True))
+    t.eq(t.stored_settings().get('tbCategoryTop'), None, 'checked: nothing stored')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_menu_reachable_narrowest(t):
+    """SF-2.13, SF-8.10: the narrowest popup allowed, in normal mode (popupCols at its minimum, POPUP_COLS_MIN) and in
+    edit mode (editCol at its minimum, EDIT_COLS_MIN), in every theme and size, in French (the widest texts), shows its
+    menu button, and the settings open from it; a smaller value is refused by Save, and one stored anyway is corrected.
+    A list of one line, or an edit box of one row, keeps its toolbars."""
+    t.load(settings=EMULE)
+    t.eq(t.js('[POPUP_COLS_MIN, EDIT_COLS_MIN]'), [35, 35], 'the minimums, in PARAM: the same for the popup and the edit box')
+    themes = t.js('Object.keys(THEMES)')
+    for theme in themes:
+        for size in (100, 140):
+            base = dict(EMULE, language='fr', theme=theme, textSize=size)
+            t.load(settings=dict(base, popupCols=35))
+            t.check(t.js(MENU_REACHABLE), f'{theme}, {size}, 35 characters: the settings or the menu button in the popup')
+            t.load(settings=dict(base, editCol=35), popup_mode=2)
+            t.check(t.js(MENU_REACHABLE), f'{theme}, {size}, edit mode, 35 columns: the settings or the menu button in the popup')
+    t.load(settings=dict(EMULE, popupCols=35))
+    t.click('#emlMenuBtn')
+    t.click('#emlMenu [data-menu=settings]')
+    t.check(t.settings_open(), 'the settings opened from the menu')
+    t.set_field('popupCols', '34')
+    t.set_field('editCol', '34')
+    t.js("document.getElementById('GM_config_saveBtn').click()")
+    t.pump(0.3)
+    errors = t.js("[].map.call(document.querySelectorAll('#GM_config .error'), function (e) { return e.parentNode.id; })")
+    t.check('GM_config_popupCols_var' in errors and 'GM_config_editCol_var' in errors, 'smaller values refused, under their fields', errors)
+    t.load(settings=dict(EMULE, popupCols=20, editCol=10))
+    t.eq([t.stored_settings().get(k) for k in ('popupCols', 'editCol')], [0, 35], 'stored by an older version: corrected')
+    t.check('would hide its menu' in (t.js("(document.querySelector('#emlStatus .emlStatusText') || {}).textContent") or ''), 'the width corrected: told in the band', t.js("(document.querySelector('#emlStatus .emlStatusText') || {}).textContent"))
+    for settings, mode in ((dict(EMULE, popupRows=1), 1), (dict(EMULE, editRow=1), 2)):
+        t.load(settings=settings, popup_mode=mode)
+        t.eq(t.js("document.getElementById('emlTop').getBoundingClientRect().height > 0"), True, f'one line, mode {mode}: the toolbars kept')
+    t.eq(t.dialogs, [], 'no alert')
+
+
+def test_toolbar_menu(t):
+    """SF-2.13: the menu button opens, under it, the controls folded, in the order Server, Category, Edit mode,
+    Settings, Help, Minimize, Close (the buttons at the top right only, when nothing else is folded); its lists act as those of
+    the toolbars (the server chosen for the page), its commands as their buttons; it closes on a choice, on Escape and
+    on a click elsewhere."""
+    servers = two_servers()
+    t.load(settings=settings_of(servers), servers=servers)
+    try:
+        for width in range(420, 150, -10):      # the widest window where the bottom toolbar is folded, and fits
+            t.set_viewport(width, 700)
+            t.pump(0.2)
+            fold = t.js(FOLD)
+            if 'bottom.category' in fold['folded']:
+                break
+        t.eq(['bottom.category' in fold['folded'], fold['overflow']], [True, False], f'a narrow popup ({width} px): the lists and Edit mode folded, nothing cut')
+        t.click('#emlMenuBtn')
+        t.eq(t.js(MENU_ROWS), ['Server', 'Category', 'Edit mode'] + EXPORT_ROWS + ['Settings', 'Help', 'Minimize', 'Close'], 'the menu, in its order')
+        t.eq(t.js("document.getElementById('emlMenuBtn').getAttribute('aria-expanded')"), 'true', 'its button pressed')
+        menu = t.js("(function(){var m=document.getElementById('emlMenu').getBoundingClientRect(); return [m.left >= 0, m.right <= innerWidth];})()")
+        t.eq(menu, [True, True], 'the menu in the window')
+        t.js("var l = document.getElementById('srvMenu'); l.value = 'srv1'; l.dispatchEvent(new Event('change'))")
+        t.eq([t.js("document.getElementById('srv').value"), t.js("!!document.getElementById('emlMenu')")], ['srv1', False],
+             'a server chosen in the menu: the server of the page, the menu closed')
+        t.click('#emlMenuBtn')
+        t.press('Escape')
+        t.eq([t.js("!!document.getElementById('emlMenu')"), t.js("!!document.getElementById('theDiv')")], [False, True],
+             'Escape: the menu closed, the popup kept')
+        t.click('#emlMenuBtn')
+        t.click('#emlTop .emlCount')      # out of the menu, which covers the middle of the list
+        t.eq(t.js("!!document.getElementById('emlMenu')"), False, 'a click elsewhere: the menu closed')
+        t.click('#emlMenuBtn')
+        t.click('#emlMenu [data-menu=help]')
+        t.eq([t.js("!!document.getElementById('emlHelp')"), t.js("!!document.getElementById('emlMenu')")], [True, False],
+             'Help in the menu: the help shown, the menu closed')
+        t.press('Escape')
+        # the bottom toolbar without Export, narrower than the top one: a width where the menu button alone is enough
+        t.load(settings=dict(settings_of(servers), tbExportBottom='none'), servers=servers)
+        for width in range(800, 300, -10):      # the widest window where the menu button is needed
+            t.set_viewport(width, 700)
+            t.pump(0.2)
+            if t.js(FOLD)['folded'] == ['menu']:
+                break
+        t.eq(t.js(FOLD)['folded'], ['menu'], f'{width} px: the menu button only')
+        t.click('#emlMenuBtn')
+        t.eq(t.js(MENU_ROWS), ['Settings', 'Help', 'Minimize', 'Close'], 'step 1: the buttons at the top right only')
+    finally:
+        t.clear_viewport()
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_menu_in_short_window(t):
+    """SF-2.13: in a window too short for the menu below or above its button, the menu stays in the window, as high as it at
+    most, and scrolls: its last command reachable."""
+    servers = two_servers()
+    t.load(settings=settings_of(servers), servers=servers)
+    try:
+        t.set_viewport(300, 260)
+        t.pump(0.3)
+        t.click('#emlMenuBtn')
+        box = t.js("(function(){var m=document.getElementById('emlMenu'), r=m.getBoundingClientRect();"
+                   " return [r.top >= -0.5, r.bottom <= innerHeight + 0.5, m.scrollHeight > m.clientHeight];})()")
+        t.eq(box, [True, True, True], 'in the window, scrolled')
+        t.click('#emlMenu [data-menu=close]')
+        t.eq(t.js("!!document.getElementById('theDiv')"), False, 'its last command, Close, reachable')
+    finally:
+        t.clear_viewport()
+    t.eq(t.errors, [], 'no JavaScript error')
+
+# the files saved and the texts copied by the export, caught: the click on the link of a file, the clipboard, the command copy
+EXPORT_CATCH = """(function () {
+  window.__saved = []; window.__copied = [];
+  HTMLAnchorElement.prototype.click = function () {
+    var entry = {name: this.download, type: null, data: null}; window.__saved.push(entry);
+    fetch(this.href).then(function (r) { entry.type = r.headers.get('content-type'); return r.arrayBuffer(); }).then(function (b) {
+      var s = ''; new Uint8Array(b).forEach(function (c) { s += String.fromCharCode(c); }); entry.data = btoa(s); }); };
+  if (navigator.clipboard) { navigator.clipboard.writeText = function (text) { window.__copied.push(['clipboard', text]); return Promise.resolve(); }; }
+  document.execCommand = function (command) { window.__copied.push([command, document.activeElement.value]); return true; };
+})()"""
+EXPORT_DATE = "(function(){var d=new Date();return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);})()"
+STATUS_TEXT = "(document.querySelector('#emlStatus .emlStatusText') || {}).textContent"
+
+
+def export_saved(t):
+    """The files saved by the export: (name, type, bytes)."""
+    import base64
+    t.pump(0.3)
+    return [(f['name'], f['type'], base64.b64decode(f['data'] or '')) for f in t.js('window.__saved')]
+
+
+def export_choose(t, row):
+    """A format chosen in the menu of Export, opened by its button in the bottom toolbar."""
+    t.click('#emlExport')
+    t.click(f'#emlMenu [data-menu=export-{row}]')
+
+
+def read_collection(data):
+    """An eMule collection read as eMule reads it (Collection.cpp, CollectionFile.cpp, CTag of packets.cpp): its version,
+    its header tags, then its files, each one as {tag id: value}; every byte read."""
+    pos = 0
+
+    def uint(size):
+        nonlocal pos
+        value = int.from_bytes(data[pos:pos + size], 'little')
+        pos += size
+        return value
+
+    def tag():
+        nonlocal pos
+        kind = uint(1)
+        if kind & 0x80:
+            kind &= 0x7F
+            ident = uint(1)
+        else:
+            length = uint(2)
+            ident = data[pos:pos + length]
+            pos += length
+        if kind == 0x01:
+            value = data[pos:pos + 16].hex()
+            pos += 16
+        elif kind == 0x02 or 0x11 <= kind <= 0x20:
+            length = uint(2) if kind == 0x02 else kind - 0x10
+            value = data[pos:pos + length].decode('utf-8')
+            pos += length
+        else:
+            value = uint({0x09: 1, 0x08: 2, 0x03: 4, 0x0B: 8}[kind])
+        return ident, value
+
+    version = uint(4)
+    header = dict(tag() for _ in range(uint(4)))
+    files = [dict(tag() for _ in range(uint(4))) for _ in range(uint(4))]
+    assert pos == len(data), f'{len(data) - pos} byte(s) left'
+    return version, header, files
+
+
+def link_info(link):
+    """What an ed2k link of a file tells, read independently of the script: name, size, hash, AICH hash."""
+    import urllib.parse
+    parts = link.split('|')
+    name = urllib.parse.unquote(parts[2]) if '%' in parts[2] else parts[2]
+    aich = next((p[2:].upper() for p in parts if p.lower().startswith('h=')), '')
+    return {'name': name, 'size': int(parts[3]), 'hash': parts[4].lower(), 'aich': aich}
+
+
+def test_export_button(t):
+    """SF-14, SF-2.14: Export, after Edit mode in the bottom toolbar (not shown at the top by default), its label and its
+    tooltip; its menu, under it on its left edge: Copy, eMule collection, CSV, Text; the button pressed while open; a click
+    on it again, Escape or a click elsewhere closes it."""
+    t.load(settings=EMULE)
+    t.eq([c[0] for c in t.js(BAR + "('emlBottom')")][:4], ['checkall2', 'emlCount', 'emlEdit', 'emlExport'], 'after Edit mode, at the bottom')
+    t.eq(t.js("getComputedStyle(document.getElementById('emlExportTop')).display"), 'none', 'not shown at the top')
+    t.eq(t.js("[document.getElementById('emlExport').textContent, !!document.querySelector('#emlExport u'),"
+              " document.getElementById('emlExport').title]"),
+         ['Export', False, 'Export the checked links: copy them, or save them as an eMule collection, a CSV or a text file'
+                           '\nCtrl+Alt+C copies the links'],
+         'its label (no letter underlined: no shortcut) and its tooltip')
+    t.click('#emlExport')
+    t.eq(t.js(MENU_ROWS), EXPORT_ROWS, 'its menu, in its order')
+    place = t.js("(function(){var m=document.getElementById('emlMenu').getBoundingClientRect(), b=document.getElementById('emlExport').getBoundingClientRect();"
+                 " return [Math.abs(m.left-b.left) < 0.5, m.top >= b.bottom - 0.5 || m.bottom <= b.top + 0.5,"
+                 " document.getElementById('emlExport').getAttribute('aria-expanded')];})()")
+    t.eq(place, [True, True, 'true'], 'under it (or above), on its left edge; the button pressed')
+    t.click('#emlExport')
+    t.eq([t.js("!!document.getElementById('emlMenu')"), t.js("document.getElementById('emlExport').getAttribute('aria-expanded')")],
+         [False, 'false'], 'a click again: closed')
+    t.click('#emlExport')
+    t.press('Escape')
+    t.eq([t.js("!!document.getElementById('emlMenu')"), t.js("!!document.getElementById('theDiv')")], [False, True], 'Escape: closed, the popup kept')
+    t.click('#emlExport')
+    t.click('#divBody')
+    t.eq(t.js("!!document.getElementById('emlMenu')"), False, 'a click elsewhere: closed')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_export_files(t):
+    """SF-14: the checked links saved as a file named <title of the page> <date>: a text file (a link per line, CRLF), a
+    CSV (UTF-8 with its BOM, Link, Name, Size as in the list, Referer the page, RFC 4180) and an eMule collection (read as
+    eMule reads it: version, name of the collection, hash, size, name and AICH hash of each file); the answer in the band."""
+    import csv
+    import io
+    t.load(settings=EMULE)
+    t.click('#l0')      # one link unchecked: left out
+    t.js(EXPORT_CATCH)
+    checked = t.js('getSelectLink(eLinks)')
+    t.check(0 < len(checked) < t.js('eLinks.length'), 'some links checked', checked)
+    stem = t.js('document.title') + ' ' + t.js(EXPORT_DATE)
+    export_choose(t, 'text')
+    t.eq(t.js(STATUS_TEXT), f'{len(checked)} link(s) exported (text)', 'the answer')
+    export_choose(t, 'csv')
+    export_choose(t, 'collection')
+    saved = export_saved(t)
+    t.eq([(name, kind.split(';')[0]) for name, kind, _ in saved],
+         [(stem + '.txt', 'text/plain'), (stem + '.csv', 'text/csv'), (stem + '.emulecollection', 'application/octet-stream')],
+         'three files, named after the page and the day')
+    t.eq(saved[0][2].decode('utf-8'), '\r\n'.join(checked) + '\r\n', 'text: the checked links, one per line')
+    text = saved[1][2].decode('utf-8')
+    t.check(text.startswith('\ufeff') and '\r\n' in text, 'CSV: UTF-8 with its BOM, CRLF')
+    rows = list(csv.reader(io.StringIO(text[1:], newline='')))
+    url = t.js('location.href')
+    sizes = [t.js(f"humanFileSize({link_info(l)['size']}, false, 0)") for l in checked]
+    t.eq(rows, [['Link', 'Name', 'Size', 'Referer']] + [[l, link_info(l)['name'], size, url] for l, size in zip(checked, sizes)],
+         'CSV: Link, Name, Size as in the list, Referer')
+    version, header, files = read_collection(saved[2][2])
+    infos = [link_info(l) for l in checked]
+    t.eq(version, 2 if any(i['size'] > 4290048000 for i in infos) else 1, 'collection: version 2 with a file over 4 290 048 000 bytes')
+    t.eq(header, {0x01: t.js('document.title')}, 'collection: its name, the title of the page, no author')
+    t.eq(files, [{0x28: i['hash'], 0x02: i['size'], 0x01: i['name'], **({0x27: i['aich']} if i['aich'] else {})} for i in infos],
+         'collection: hash, size, name, AICH hash of each file')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_export_edit_mode(t):
+    """SF-14: in edit mode, the links of the edit box are exported; a link that is not a file (a server) is left out of the
+    collection; in the CSV, a name with a comma or a quote is quoted, a name taken for a formula starts with an apostrophe;
+    a collection with a small file and a short name (one-byte integer, short string)."""
+    import csv
+    import io
+    hash1, hash2 = '0123456789abcdef0123456789abcdef', 'fedcba9876543210fedcba9876543210'
+    lines = [f'ed2k://|file|a,b "c".avi|100|{hash1}|h=ABCDEFGHIJKLMNOPQRSTUVWXYZ234567|/',
+             f'ed2k://|file|=1+1.avi|70000|{hash2}|/', 'ed2k://|server|10.0.0.1|4661|/']
+    t.load(settings=EMULE, popup_mode=2)
+    t.js(EXPORT_CATCH)
+    t.js(f"document.getElementById('editbox').value = {json.dumps(chr(10).join(lines + ['not a link', '']))}")
+    export_choose(t, 'csv')
+    export_choose(t, 'collection')
+    t.eq(t.js(STATUS_TEXT), '2 link(s) exported (eMule collection)', 'the collection: the two files only')
+    saved = export_saved(t)
+    rows = list(csv.reader(io.StringIO(saved[0][2].decode('utf-8')[1:], newline='')))
+    t.eq([r[:3] for r in rows[1:]], [[lines[0], 'a,b "c".avi', '100 B'], [lines[1], "'=1+1.avi", '68 KiB'], [lines[2], '', '']],
+         'CSV: the lines of the edit box, quoted, the formula neutralized')
+    t.check('"a,b ""c"".avi"' in saved[0][2].decode('utf-8'), 'a name with a comma and quotes, quoted (RFC 4180)')
+    version, header, files = read_collection(saved[1][2])
+    t.eq([version, files], [1, [{0x28: hash1, 0x02: 100, 0x01: 'a,b "c".avi', 0x27: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'},
+                                {0x28: hash2, 0x02: 70000, 0x01: '=1+1.avi'}]], 'collection: the two files')
+    size = len(header[0x01].encode('utf-8'))
+    t.eq(saved[1][2][8], 0x80 | (0x11 + size - 1) if size <= 16 else 0x82, 'the name of the collection: a short string type when it fits')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_export_copy(t):
+    """SF-14: Copy puts the checked links, one per line, in the clipboard of the browser; without it (a page in http), by
+    a hidden text selected and copied; the answer in the band. Nothing checked: nothing exported, a warning."""
+    t.load(settings=EMULE)
+    t.js(EXPORT_CATCH)
+    checked = t.js('getSelectLink(eLinks)')
+    export_choose(t, 'copy')
+    t.eq(t.js('window.__copied'), [['clipboard', '\n'.join(checked)]], 'copied by the clipboard of the browser')
+    t.eq(t.js(STATUS_TEXT), f'{len(checked)} link(s) copied', 'the answer')
+    t.js("window.__copied = []; Object.defineProperty(navigator, 'clipboard', {value: undefined, configurable: true})")
+    export_choose(t, 'copy')
+    t.eq(t.js('window.__copied'), [['copy', '\n'.join(checked)]], 'without the clipboard: a hidden text copied')
+    t.eq(t.js("document.querySelectorAll('body > textarea').length"), 0, 'the hidden text removed')
+    t.js("[].forEach.call(document.querySelectorAll('#divBody input[type=checkbox]:checked'), function (c) { c.click(); })")
+    t.eq(t.js('getSelectLink(eLinks).length'), 0, 'no link checked')
+    export_choose(t, 'text')
+    t.eq([t.js(STATUS_TEXT), len(export_saved(t))], ['No link to export: check some links first', 0], 'nothing exported, a warning')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_export_shortcut(t):
+    """SF-14: the shortcut of Export, none by default, given a letter in the PARAM block (P here), opens its menu, its first
+    command focused (Enter copies), and closes it again; without Export shown, under the top toolbar at its right; nothing
+    with the popup closed."""
+    t.load(settings=EMULE)
+    t.js(EXPORT_CATCH)
+    t.js("shortcuts.export = 'P'")
+    t.keys('p')
+    t.eq([t.js("document.getElementById('emlMenu').getAttribute('data-for')"), t.js("document.activeElement.getAttribute('data-menu')")],
+         ['export', 'export-copy'], 'Ctrl+Alt+P: the menu, Copy focused')
+    # the focused command activated, as Enter does (headless Firefox, its window never focused, does not activate a button on Enter)
+    t.js('document.activeElement.click()')
+    t.eq([len(t.js('window.__copied')), t.js("!!document.getElementById('emlMenu')")], [1, False], 'Copy activated: copied, the menu closed')
+    t.keys('p')
+    t.keys('p')
+    t.eq(t.js("!!document.getElementById('emlMenu')"), False, 'Ctrl+Alt+P again: closed')
+    t.load(settings=dict(EMULE, tbExportBottom='none'))
+    t.js("shortcuts.export = 'P'")
+    t.keys('p')
+    t.eq(t.js("(function(){var m=document.getElementById('emlMenu'), b=document.getElementById('emlTop').getBoundingClientRect();"
+              " return m ? Math.abs(m.getBoundingClientRect().right - b.right) < 0.5 : null;})()"), True,
+         'Export shown nowhere: the menu under the top toolbar, at its right')
+    t.load(settings=EMULE)
+    t.js("shortcuts.export = 'P'")
+    t.click('#emlClose')
+    t.keys('p')
+    t.eq(t.js("!!document.getElementById('emlMenu')"), False, 'the popup closed: nothing')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_copy_shortcut(t):
+    """SF-9, SF-14: Ctrl+Alt+C copies the links that Download would send: the checked ones, those of the edit box in edit
+    mode, those that the popup would check when it is closed (SF-5.5); its message in the band. Nothing on a page without
+    ed2k links, not even a band."""
+    t.load(settings=EMULE)
+    t.js(EXPORT_CATCH)
+    t.click('#l0')
+    t.keys('c')
+    copied = t.js('window.__copied')
+    t.eq([len(copied), len(copied[-1][1].split('\n')) if copied else 0, t.js(STATUS_TEXT)], [1, 8, '8 link(s) copied'],
+         'Ctrl+Alt+C: the 8 links checked copied, the message in the band')
+    t.eq(t.js(VIEW), 'maximized', 'the popup still open')
+    t.edit_mode()
+    t.js("var e = document.getElementById('editbox'); e.value = e.value.split('\\n').slice(0, 2).join('\\n')")
+    t.keys('c')
+    t.eq(len(t.js('window.__copied')[-1][1].split('\n')), 2, 'edit mode: the links of the edit box')
+    t.load(settings=EMULE, popup_mode=0)
+    t.js(EXPORT_CATCH)
+    t.keys('c')
+    copied = t.js('window.__copied')
+    t.eq([len(copied), len(copied[-1][1].split('\n')) if copied else 0, t.js(VIEW)], [1, 9, 'closed'],
+         'the popup closed: the links it would check, the popup left closed')
+    t.eq(t.js(STATUS_TEXT), '9 link(s) copied', 'the message in the band')
+    t.load('__nolinks', settings=EMULE)
+    t.js(EXPORT_CATCH)
+    t.keys('c')
+    t.eq([t.js('window.__copied'), t.js("!!document.getElementById('emlStatus')")], [[], False], 'no ed2k link: nothing, no band')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_removed_shortcuts(t):
+    """SF-9: Ctrl+Alt+M, Ctrl+Alt+E and Ctrl+Alt+X do nothing any more (X is taken by Firefox); the menu of the userscript
+    manager holds Settings, Help, Open Popup and the debug traces only."""
+    t.load(settings=EMULE)
+    for key in 'mex':
+        t.keys(key)
+        t.eq([t.js(VIEW), t.js('popupMode'), t.js("!!document.getElementById('emlMenu')")], ['maximized', 1, False],
+             f'Ctrl+Alt+{key.upper()}: nothing')
+    t.eq(sorted(t.js('Object.keys(window.__GM_menu)')), ['h', 'o', 's', 't'], 'the menu of the manager: its access keys')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+SHORTCUT_TEXTS = """(function(){var t=function(s){var e=document.querySelector(s);return e?e.title:null;};
+  return {checkAll: t('#checkall'), download: t('#emlTop .emlAdd'), downloadLabel: document.querySelector('#emlTop .emlAdd').innerHTML,
+  edit: t('#emlEdit'), editLabel: document.getElementById('emlEdit').innerHTML, export: t('#emlExport'),
+  settings: t('#emlTop .emlRight'), help: t('#emlHelpBtn'), min: t('#emlMin'), close: t('#emlClose')};})()"""
+
+
+def test_shortcut_letters(t):
+    """SF-9: the letters of the shortcuts, in the PARAM block (shortcuts): the tooltips, the help and the keys follow them;
+    an action without a letter has none, one given a letter gets it (close, editMode, export); the letter underlined in a
+    label that holds it."""
+    t.load(settings=EMULE)
+    t.eq(t.js('SHORTCUTS_DEFAULT'), {'checkAll': 'A', 'download': 'D', 'view': 'W', 'settings': 'S', 'help': 'H', 'open': 'O', 'copy': 'C'},
+         'the letters by default')
+    t.eq(t.js(SHORTCUT_TEXTS), {'checkAll': 'Check or uncheck every link (Ctrl+Alt+A)', 'download': 'Download the checked links (Ctrl+Alt+D)',
+                                'downloadLabel': '<u>D</u>ownload', 'edit': 'Edit the links as text', 'editLabel': 'Edit mode',
+                                'export': 'Export the checked links: copy them, or save them as an eMule collection, a CSV or a text file'
+                                          '\nCtrl+Alt+C copies the links',
+                                'settings': 'Settings (Ctrl+Alt+S)', 'help': 'Help (Ctrl+Alt+H)', 'min': 'Minimize (Ctrl+Alt+W)',
+                                'close': 'Close'}, 'the tooltips by default')
+    # other letters, as the PARAM block would give them: the popup drawn again
+    t.js("shortcuts = {checkAll: '', download: 'L', view: 'V', settings: 'S', help: 'H', open: 'O', copy: '', close: 'Q',"
+         " editMode: 'T', export: 'P'}; closePopup(); openButton();")
+    shown = t.js(SHORTCUT_TEXTS)
+    t.eq([shown['checkAll'], shown['download'], shown['downloadLabel'], shown['edit'], shown['editLabel'], shown['export'],
+          shown['min'], shown['close']],
+         ['Check or uncheck every link', 'Download the checked links (Ctrl+Alt+L)', 'Down<u>l</u>oad', 'Edit the links as text (Ctrl+Alt+T)',
+          'Edi<u>t</u> mode', 'Export the checked links: copy them, or save them as an eMule collection, a CSV or a text file (Ctrl+Alt+P)',
+          'Minimize (Ctrl+Alt+V)', 'Close (Ctrl+Alt+Q)'], 'the tooltips and the underlined letters follow')
+    t.keys('h')
+    t.eq(t.js(HELP_ROWS), [[True, s] for s in ('', '', '', '', 'Ctrl+Alt+L', 'Ctrl+Alt+T', 'Ctrl+Alt+P', 'Ctrl+Alt+S',
+                                                 'Ctrl+Alt+H', 'Ctrl+Alt+V', 'Ctrl+Alt+Q', '')], 'the help follows')
+    t.keys('h')
+    t.keys('p')
+    t.eq([t.js("document.getElementById('emlMenu').getAttribute('data-for')"), t.js("document.activeElement.getAttribute('data-menu')")],
+         ['export', 'export-copy'], 'Ctrl+Alt+P: the menu of Export, Copy focused')
+    t.keys('p')
+    t.eq(t.js("!!document.getElementById('emlMenu')"), False, 'Ctrl+Alt+P again: closed')
+    t.keys('t')
+    t.eq(t.js('popupMode'), 2, 'Ctrl+Alt+T: edit mode')
+    t.keys('a')
+    t.keys('d')
+    t.eq(t.dialogs, [], 'A and D: nothing')
+    t.keys('v')
+    t.eq(t.js(VIEW), 'minimized', 'Ctrl+Alt+V: minimized')
+    t.keys('q')
+    t.eq(t.js(VIEW), 'closed', 'Ctrl+Alt+Q: closed')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
+def test_export_in_menu(t):
+    """SF-14, SF-2.14: Export put in the menu of the toolbars by the settings: the menu button in place of the buttons at the
+    top right, the menu holding a heading Export and its commands after Edit mode, before Settings; a command chosen there."""
+    t.load(settings=dict(EMULE, tbExportTop='menu', tbExportBottom='none'))
+    t.js(EXPORT_CATCH)
+    t.eq(t.js("getComputedStyle(document.getElementById('emlMenuBtn')).display != 'none'"), True, 'the menu button')
+    t.click('#emlMenuBtn')
+    t.eq(t.js(MENU_ROWS), EXPORT_ROWS + ['Settings', 'Help', 'Minimize', 'Close'], 'the commands of Export, then the buttons')
+    t.eq(t.js("document.querySelector('#emlMenu .emlMenuHead').textContent"), 'Export', 'under a heading')
+    t.click('#emlMenu [data-menu=export-csv]')
+    t.eq([name[-4:] for name, _, _ in export_saved(t)], ['.csv'], 'the CSV saved from the menu')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
 def test_shortcuts_without_links(t):
     """SF-1.12: on a page without ed2k links, no shortcut opens a popup or raises an error."""
-    for key in 'ocmx':
+    for key in 'owcad':
         t.load('__nolinks', settings=EMULE)
         t.keys(key)
         t.eq(t.js(POPUP), [0, 0, 0], f'Ctrl+Alt+{key.upper()}: no popup')
         t.eq(t.errors, [], f'Ctrl+Alt+{key.upper()}: no JavaScript error')
-        if key == 'm':
-            t.eq(t.js('popupMode'), 1, 'Ctrl+Alt+M: mode unchanged')
+    t.edit_mode()
+    t.eq([t.js(POPUP), t.js('popupMode')], [[0, 0, 0], 1], 'Edit mode: no popup, mode unchanged')
 
 
 def test_debug_traces(t):
@@ -1918,30 +3243,44 @@ def test_debug_traces(t):
     t.load(debug=None)
     t.eq([c for c in t.console if 'saveConfig()' in c], [], 'no trace on a new installation')
     t.menu('t')
-    t.check(t.dialogs and 'debug traces on' in t.dialogs[-1], 'menu: traces switched on', t.dialogs)
+    t.eq([t.dialogs, t.js("(document.querySelector('#emlStatus .emlStatusText') || {}).textContent"), t.js("document.getElementById('emlStatus').className")],
+         [[], 'Emule Linker: debug traces on (see the browser console)', 'ok'], 'menu: traces switched on, told in the band, no alert')
     t.eq(t.gm('debug_mode'), 1, 'setting stored')
     t.console.clear()
     t.reload()
     t.check(t.traced('saveConfig() storing the settings'), 'traces shown on the next page')
     t.menu('t')
-    t.check(t.dialogs and 'debug traces off' in t.dialogs[-1], 'menu: traces switched off', t.dialogs)
+    t.eq([t.dialogs, t.js("(document.querySelector('#emlStatus .emlStatusText') || {}).textContent")], [[], 'Emule Linker: debug traces off'], 'menu: traces switched off, in the band')
     t.console.clear()
     t.reload()
     t.eq([c for c in t.console if 'saveConfig()' in c], [], 'no trace any more on the next page')
 
 
+def test_internal_error(t):
+    """An error that should never happen (an unknown state of the popup) is told in the band, in red until closed,
+    translated, and traced, rather than in an alert of the browser (up to 0.14)."""
+    t.load(settings=EMULE)
+    t.js("popupMode = 7; addButton()")
+    t.eq([t.dialogs, t.js("(document.querySelector('#emlStatus .emlStatusText') || {}).textContent"),
+          t.js("(document.getElementById('emlStatus') || {}).className")],
+         [[], 'Internal error of Emule Linker (popupMode=7): please report the problem', 'ko'], 'in the band, in red, no alert')
+    t.check(t.traced('ERROR: popupMode=7'), 'traced')
+    t.eq(t.errors, [], 'no JavaScript error')
+
+
 def test_menu_entries(t):
     """SF-9: the userscript manager menu entries, called the way Tampermonkey calls them."""
     t.load(settings=EMULE)
-    t.menu('c')
-    t.eq(t.js(POPUP), [0, 0, 0], 'menu "Close Popup" closes it')
+    t.close_popup()
+    t.press('Escape')
     try:
         t.menu('o')
         t.eq(t.js(POPUP), [1, 9, 0], 'menu "Open Popup" opens it, without reloading the page')
     except RuntimeError as e:
         t.check(False, 'menu "Open Popup" works', str(e).splitlines()[0])
-    t.menu('m')
-    t.eq(t.js(POPUP), [1, 0, 1], 'menu "Change mode" switches to edit mode')
+    t.menu('h')
+    t.check(t.js("!!document.getElementById('emlHelp')"), 'menu "Help" shows the help')
+    t.menu('h')
     t.menu('s')
     t.check(t.settings_open(), 'menu "Settings" opens the settings dialog')
     t.eq(t.errors, [], 'no JavaScript error')
@@ -2150,11 +3489,11 @@ def test_check_all_boxes(t):
     for i in range(1, 9):
         t.click(f'#l{i}')
     t.eq(t.js(ALL_BOXES), [[True, False, False]] * 2, 'every link checked by hand: both boxes checked')
-    t.keys('m')
+    t.edit_mode()
     lines = t.js("document.getElementById('editbox').value.split('\\n')")
     t.eq([len(lines), any(COLLECTION in line for line in lines)], [9, True], 'edit mode: every link, the collection included')
     t.eq([b[2] for b in t.js(ALL_BOXES)], [True, True], 'both boxes disabled')
-    t.keys('m')
+    t.edit_mode()
     t.eq([r[0] for r in t.js(FILTER_ROWS) if not r[1]], [COLLECTION], 'normal mode again: the filter applied again')
 
 
@@ -2165,10 +3504,10 @@ def test_settings_check_filter(t):
     error = "(document.querySelector('#GM_config_checkFilter_var .error') || {}).textContent"
     t.load(settings=EMULE)
     t.check(t.open_settings(), 'settings dialog opened')
-    t.eq(t.js("document.getElementById('GM_config_popupWidth_var').nextElementSibling.id"), 'GM_config_checkFilter_var',
+    t.eq(t.js("document.getElementById('GM_config_popupCols_var').nextElementSibling.id"), 'GM_config_checkFilter_var',
          'after the Max Popup Width')
     t.eq(t.js("document.getElementById('GM_config_checkFilter_field_label').textContent"), 'Links checked by default', 'label')
-    t.eq(t.js("document.getElementById('GM_config_section_desc_2').textContent"),
+    t.eq(t.js("document.getElementById('GM_config_section_desc_4').textContent"),
          'How the popup is displayed, and the links it checks', 'description of the section')
     t.eq(t.js(f"{field('checkFilter')}.value"), '', 'empty by default')
     t.click('#GM_config_helpBtn')       # the help shown, to compare the widths

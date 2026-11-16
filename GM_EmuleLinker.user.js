@@ -9,7 +9,7 @@
 // @grant 		GM_log
 // @grant 		GM_xmlhttpRequest
 // @connect     *
-// @version     0.14
+// @version     0.15
 // @updateURL       https://raw.githubusercontent.com/alo0/GM_EmuleLinker/master/GM_EmuleLinker.user.js
 // @downloadURL     https://raw.githubusercontent.com/alo0/GM_EmuleLinker/master/GM_EmuleLinker.user.js
 // ==/UserScript==
@@ -23,8 +23,8 @@
 //  - eMule, aMule 2.x or MLDonkey, through their web interface,
 //  - aMule 3.1 and later, through its REST API,
 //  - or your own server.
-// Everything is also available from the Tampermonkey menu and through
-// keyboard shortcuts (Ctrl+Alt+D to send the links).
+// Keyboard shortcuts do the main commands (Ctrl+Alt+D sends the links), and
+// the Tampermonkey menu opens the settings, the help and the popup.
 // -------------------------------------------------------------------------
 // INSTALLATION
 // 1. install this script in the Tampermonkey extension
@@ -40,15 +40,16 @@
 // -------------------------------------------------------------------------
 // CONTENTS: Script structure (this file):
 //  PARAM      the default values of the settings, then the look: the CSS of the popup, of its boxes and
-//             of the settings dialog, the icons of the popup (the themes to come); then the texts, one
-//             table per language
+//             of the settings dialog, their colors given by the themes, the icons of the popup; then the
+//             texts, one table per language
 //  LIB        GM_config, the library of the settings dialog, embedded with local fixes
 //  CODE       State       the links of the page, the state of the popup, of the sending and of the settings dialog
 //             Startup     the menus, the settings read, the links found, the popup shown, the keyboard shortcuts
 //             Detection   the ed2k links of the page (SF-1)
 //             Popup       its toolbars, its views, its list, its edit box and its commands (SF-2 to SF-5, SF-9, SF-10)
-//             Selection   the links checked, the server and the category chosen (SF-5, SF-6, I-6)
+//             Selection   the links checked, the server and the category chosen (SF-5, SF-6)
 //             Sending     the links to the method of the settings, and the answer of the client (SF-7)
+//             Export      the links copied, or saved as an eMule collection, a CSV or a text file (SF-14)
 //             Settings    the settings read and saved, the settings dialog and its servers (SF-8)
 //             Utilities   the traces, the requests of the script, the categories as text, the sizes
 // -------------------------------------------------------------------------
@@ -65,9 +66,11 @@
 var DEBUG_MODE = GM_getValue('debug_mode', 0);
 
 // General parameters
-var language = 'browser'; // the language of the texts: browser (the one of the browser, when the script has its texts), en or fr (a setting, I-7)
+var language = 'browser'; // the language of the texts: browser (the one of the browser, when the script has its texts), en or fr (a setting, SF-12)
+var theme = 'auto'; // the colors of the screens of the script: auto (light, or dark with Windows or the browser), or a theme of THEMES (a setting, SF-13)
+var textSize = 100; // the size of the text and of the spacing of the screens of the script, in percent: SIZE_MIN to SIZE_MAX (a setting, SF-2.5)
 var popupView = 'maximized'; // the view of the popup when a page with ed2k links opens: maximized, minimized or closed
-var closeMessage = true; // a message when the popup is closed (its Close button, Ctrl+Alt+C, the menu), telling how to open it again (a setting)
+var closeMessage = true; // a message when the popup is closed (its Close button, the menu), telling how to open it again (a setting)
 
 // emule/amule/mldonkey server parameters
 var ed2kDlMethod = 'local';
@@ -86,18 +89,36 @@ var emuleCat = [ {name: 'default', value: '0', select: '1'} ]; // Which emule ca
 // Popup parameters
 var popupCorner = 'top-left'; // the corner of the window where the popup is shown: top-left, top-right, bottom-left or bottom-right
 var popupScroll = 'floating'; // floating: the popup stays in view when the page scrolls; static: it scrolls with the page
-var popupHeight = 800; // max height in pixel of the popup box
-var popupWidth = 800; // max width in pixel of the popup box
+var popupRows = 40; // max height of the popup, in lines of its list: the list scrolls beyond (0: the height of the window)
+var popupCols = 150; // max width of the popup, in characters of its list (0: the width of the window)
+var POPUP_COLS_MIN = 35; // the narrowest popup, in characters of its list: its toolbars folded still show the menu button (SF-2.13)
 var checkFilter = ''; // the links checked in the popup: a regular expression on the file name ('' checks every link)
-var showCategories = true; // the category list in the toolbars of the popup (a setting)
-var categoryListMinWidth = 100; // min width in pixels of the category list: the short categories of another server (I-6) move nothing
-var categoryListMaxWidth = 140; // max width in pixels of the category list: a longer name is cut, the open list and the tooltip show it whole
-var showServerList = true; // the server list in the toolbars of the popup, when it offers two choices at least (a setting)
-var serverListMaxWidth = 140; // max width in pixels of the server list: a longer name is cut, the open list and the tooltip show it whole
+// where each control of the toolbars of the popup is shown, from left to right (settings, SF-2.14): shown in the toolbar,
+// in the menu of the top toolbar (menu, the top toolbar only), or not shown (none) in it; the check box, the counter and
+// the Download of the top toolbar are always shown
+var toolbars = { editTop: 'none', editBottom: 'shown', exportTop: 'none', exportBottom: 'shown', serverTop: 'shown', serverBottom: 'shown', categoryTop: 'shown',
+	categoryBottom: 'shown', downloadBottom: 'shown', buttonsTop: 'shown' };
+// the keyboard shortcuts, Ctrl+Alt+<letter> (SF-9): the letter of each action, '' for none
+//   checkAll: checks or unchecks every link        download: sends the checked links (Download)
+//   view: maximized, minimized, closed, in turn    settings: opens the settings dialog
+//   help: shows or hides the help of the popup     open: opens the popup, or maximizes it
+//   copy: copies the links that Download would send
+// Other actions can take a letter, none by default: close (closes the popup), editMode (normal / edit mode),
+// export (opens the menu of Export), debug (switches the debug traces). A letter that types a character with
+// AltGr on the keyboard (E on a French one: the euro sign) does not work in Firefox, and the browser takes some
+// of them (X in Firefox)
+var shortcuts = { checkAll: 'A', download: 'D', view: 'W', settings: 'S', help: 'H', open: 'O', copy: 'C' };
+// the sections of the settings dialog unfolded the first time it opens, the other ones folded: general, servers,
+// shortcuts, toolbars, popup, editbox; then the user folds or unfolds each one, kept for the next openings (SF-8)
+var settingsUnfolded = ['general', 'servers'];
+var categoryListMinWidth = 16; // min width in characters of the category list: the short categories of another server (SF-6.11) move nothing
+var categoryListMaxWidth = 22; // max width in characters of the category list: a longer name is cut, the open list and the tooltip show it whole
+var serverListMaxWidth = 22; // max width in characters of the server list: a longer name is cut, the open list and the tooltip show it whole
 var STATUS_DELAY = 8000; // how long the band of a success (links added) stays, in ms; an error stays until closed (SF-7.10)
 
 // edit box parameters
 var editCol = 80; // number of column
+var EDIT_COLS_MIN = POPUP_COLS_MIN; // the narrowest edit box, in columns: the same limit as the popup (SF-2.13)
 var editRow = 16; // number of line
 
 // The GitHub repository of the script, linked from the bottom of the settings dialog: its issues, to
@@ -107,13 +128,257 @@ var REPOSITORY = 'https://github.com/alo0/GM_EmuleLinker';
 
 // -------------------------------------------------------------------------
 // The look: the CSS of the popup, of its message, of its help, of the band of the answers and of the settings
-// dialog, the icons of the popup. Gathered here for the themes to come (I-8); the texts of the languages (I-7)
+// dialog, their colors given by the themes, the icons of the popup; the texts of the languages (SF-12)
 // follow them.
 // -------------------------------------------------------------------------
+
+// The size of the screens of the script (SF-2.5): the setting Size, in percent, chosen on a slider from SIZE_MIN to
+// SIZE_MAX by steps of SIZE_STEP. Its factor (Size / 100) multiplies every length of 3 px or more of their CSS and of
+// the themes (the text, the margins, the buttons, the icons, the radius), the borders of 1 and 2 px staying thin
+// (scaledCss()). 100 % is the size of the earlier versions.
+var SIZE_MIN = 80;
+var SIZE_MAX = 160;
+var SIZE_STEP = 10;
+
+// The themes (SF-13): the colors and the style of every screen of the script, the popup, its message, its help, the
+// band of the answers and the settings dialog, never of the page. The CSS below writes each color as a variable
+// (--eml-<name>), and each theme of the table THEMES gives the value of every variable, without inheritance between
+// the themes, so that a theme is read at once; adding one is explained in THEMES.md. The setting Theme chooses one;
+// Automatic is not a theme: it takes THEME_AUTO_LIGHT, or THEME_AUTO_DARK when Windows or the browser is in dark mode
+// (prefers-color-scheme), and follows a change of mode at once.
+var THEME_AUTO_LIGHT = 'light';	// the theme taken by Automatic in light mode
+var THEME_AUTO_DARK = 'win11';	// the theme taken by Automatic in dark mode
+// The fonts of the themes, imposed on every element of their screens, never the one of the page (a font that the system
+// does not have gives the next one of its list)
+var THEME_FONTS = {
+	segoe: '"Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif',
+	segoeVariable: '"Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif',
+	system: 'system-ui, "Segoe UI", -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif',
+	apple: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", system-ui, sans-serif',
+	arial: 'Arial, Helvetica, sans-serif'
+};
+// Each theme lists every color:
+//  scheme, accentColor    the native controls (lists, edit box, scroll bars) light or dark, and the color of
+//                         the checked boxes (auto: the one of the browser)
+//  bg, bg2, text          the background of the boxes, of the fields of a server, the text
+//  frame, title, bar,     the frame of the boxes, their titles, the toolbars and the title bars, the titles of
+//  section                the sections of the settings and the helps of the fields
+//  line, lineSoft, lineMid  the separators: of the list, of the rows of the help and of the settings, of the dialog
+//  muted, faded, countTotal the secondary texts, the grayed-out ones, the total of the counters
+//  icon, accent, danger   the icons, the blue of Download and of the links, the red of Close and Delete
+//  linkHover, rowHover    a file name and a row of the list under the mouse
+//  ctl...                 the buttons and the lists of the toolbars, and grayed out (Off)
+//  chipBg                 the controls drawn in the help
+//  primary...             Download, OK and Save
+//  helpText, warn         the text of the helps of the settings, the orange marks (changed, notice)
+//  shadow, backdrop       the shadows of the list and of the band, the backdrop behind the dialogs
+//  wait..., ok..., ko..., doubt...  the band of the answers: waiting, success, error, warning
+// and its style:
+//  font                   its font, one of THEME_FONTS
+//  radius                 the radius of the buttons and of the lists
+//  icons                  its set of icons, a set of ICONS
+// A theme may also give optional values; without them, the screens keep the look given in brackets:
+//  frameRadius, opacity, blur  the radius of the frames of the boxes (0; 4px for the settings), the opacity of the
+//                         popup (0.97), the blur of the page seen through the boxes (backdrop-filter: none)
+//  editBg, editText       the edit box and the fields of the settings (the colors of the fields of the browser)
+//  iconBtn...             the buttons at the top right, the close buttons of the dialogs and their icons: Bg, Line,
+//                         Radius (ctlBg, ctlLine, radius), Size (22px), Hover, Active (pressed); iconSize (12px)
+//  minColor, maxColor     the icon of Minimize, the one of Maximize (accent)
+//  closeColor, closeHoverBg, closeActiveBg, closeHoverColor  Close: its icon (danger), under the mouse, pressed
+//  glyph                  the symbols drawn on the colored dots of the icons macos
+//  primaryLine, primaryBorder  the frame of Download, OK and Save (accent, 2px)
+//  primaryHoverText, primaryActive, primaryActiveRing  their text under the mouse, their background and ring pressed
+//  ctlActive, ctlHoverLine, ctlActiveLine  the other buttons: their background pressed, their border under the
+//                         mouse and pressed (ctlHover, ctlLine)
+//  menuRadius, menuBg, menuLine  the menu of a narrow popup (SF-2.13): its radius, background, border (radius, bg, ctlLine)
+//  menuHover, menuHoverText  its row under the mouse (rowHover, text)
+var THEMES = {
+	light: {
+		font: THEME_FONTS.segoe, radius: '3px', icons: 'solid',
+		scheme: 'light', accentColor: 'auto', bg: '#ffffff', bg2: '#f7f9fc', text: '#000000',
+		frame: '#2b5c8a', title: '#2b5c8a', bar: '#e8f1fb', section: '#e4eef7',
+		line: '#a0a0a0', lineSoft: '#e3e8ef', lineMid: '#c9d6e6', muted: '#555555', faded: '#999999', countTotal: '#bababa',
+		icon: '#333333', accent: '#0075ff', danger: '#d00000', linkHover: '#0000ff', rowHover: '#e3f0fa',
+		ctlBg: '#ffffff', ctlText: '#000000', ctlLine: '#8f8f9d', ctlHover: '#f3f8fd',
+		ctlOffBg: '#f5f5f5', ctlOffText: '#8a8a8a', ctlOffLine: '#c8c8c8', chipBg: '#efefef',
+		primaryBg: '#ffffff', primaryText: '#000000', primaryHover: '#0075ff', helpText: '#112233', warn: '#f0a000',
+		shadow: 'rgba(0,0,0,0.3)', backdrop: 'rgba(0,0,0,0.35)',
+		waitBg: '#f2f2f2', waitLine: '#d0d0d0', waitText: '#555555', okBg: '#e6f4ea', okLine: '#b7dfc3', okText: '#006600',
+		koBg: '#fdecea', koLine: '#f3c0c0', koText: '#cc0000', doubtBg: '#fff4e5', doubtLine: '#f0d2a6', doubtText: '#a65f00',
+		// every frame rounded as the settings; the states of the buttons marked: a steel blue border under the mouse, a light
+		// blue background pressed; Download, OK and Save filled with blue under the mouse; Close red under the mouse
+		frameRadius: '4px', ctlHoverLine: '#2b5c8a', ctlActive: '#d6e6f5', ctlActiveLine: '#2b5c8a', iconBtnHover: '#e3f0fa', iconBtnActive: '#d6e6f5',
+		primaryHoverText: '#ffffff', primaryActive: '#005fd0', closeHoverBg: '#d00000', closeActiveBg: '#a80000', closeHoverColor: '#ffffff',
+		menuRadius: '4px'
+	},
+	macos: {	// the light look of macOS: its font, its blue, pill buttons, rounded frames; its traffic lights at the top right
+		font: THEME_FONTS.apple, radius: '11px', icons: 'macos',
+		scheme: 'light', accentColor: '#007aff', bg: '#ffffff', bg2: '#f9f9fb', text: '#1d1d1f',
+		frame: '#c7c7cc', title: '#1d1d1f', bar: '#f5f5f7', section: '#f2f2f7',
+		line: '#d1d1d6', lineSoft: '#e5e5ea', lineMid: '#d1d1d6', muted: '#6e6e73', faded: '#aeaeb2', countTotal: '#c7c7cc',
+		icon: '#3a3a3c', accent: '#007aff', danger: '#e0302a', linkHover: '#0040dd', rowHover: '#eaf2ff',
+		ctlBg: '#ffffff', ctlText: '#1d1d1f', ctlLine: '#d1d1d6', ctlHover: '#f2f2f7',
+		ctlOffBg: '#f5f5f7', ctlOffText: '#aeaeb2', ctlOffLine: '#e5e5ea', chipBg: '#f2f2f7',
+		primaryBg: '#007aff', primaryText: '#ffffff', primaryHover: '#0a84ff', helpText: '#1d1d1f', warn: '#ff9500',
+		shadow: 'rgba(0,0,0,0.18)', backdrop: 'rgba(0,0,0,0.25)',
+		waitBg: '#f2f2f7', waitLine: '#d1d1d6', waitText: '#6e6e73', okBg: '#e9f8ee', okLine: '#b4e6c3', okText: '#1e7d3a',
+		koBg: '#fdeceb', koLine: '#f5c2bf', koText: '#d70015', doubtBg: '#fff5e6', doubtLine: '#ffd9a0', doubtText: '#b25000',
+		frameRadius: '12px', ctlActive: '#e5e5ea', primaryActive: '#0062cc',
+		iconBtnBg: 'transparent', iconBtnLine: 'transparent', iconBtnRadius: '50%', iconBtnSize: '26px', iconSize: '16px', iconBtnHover: 'rgba(0,0,0,0.06)',
+		minColor: '#febc2e', maxColor: '#28c840', closeColor: '#ff5f57', closeHoverBg: 'rgba(0,0,0,0.06)', glyph: 'rgba(0,0,0,0.5)',
+		menuRadius: '8px', menuLine: 'rgba(0,0,0,0.12)', menuHover: '#007aff', menuHoverText: '#ffffff'
+	},
+	firefox: {	// the light look of Firefox: its grays and its blue, pill buttons; the window controls of Windows at the top right
+		font: THEME_FONTS.system, radius: '11px', icons: 'firefox',
+		scheme: 'light', accentColor: '#0061e0', bg: '#ffffff', bg2: '#f9f9fb', text: '#15141a',
+		frame: '#cfcfd8', title: '#15141a', bar: '#f9f9fb', section: '#f0f0f4',
+		line: '#cfcfd8', lineSoft: '#e0e0e6', lineMid: '#cfcfd8', muted: '#5b5b66', faded: '#8f8f9d', countTotal: '#bfbfc9',
+		icon: '#15141a', accent: '#0061e0', danger: '#d70022', linkHover: '#0250bb', rowHover: '#e0ecfc',
+		ctlBg: '#f0f0f4', ctlText: '#15141a', ctlLine: '#e0e0e6', ctlHover: '#e0e0e6',
+		ctlOffBg: '#f9f9fb', ctlOffText: '#a0a0aa', ctlOffLine: '#e0e0e6', chipBg: '#f0f0f4',
+		primaryBg: '#0061e0', primaryText: '#ffffff', primaryHover: '#0250bb', helpText: '#15141a', warn: '#ffa436',
+		shadow: 'rgba(58,57,68,0.25)', backdrop: 'rgba(21,20,26,0.3)',
+		waitBg: '#f0f0f4', waitLine: '#cfcfd8', waitText: '#5b5b66', okBg: '#e6f8ef', okLine: '#a6e7c6', okText: '#017a40',
+		koBg: '#ffe8e8', koLine: '#ffbdc5', koText: '#c50042', doubtBg: '#fff4de', doubtLine: '#ffd567', doubtText: '#a44900',
+		frameRadius: '8px', ctlActive: '#cfcfd8', primaryActive: '#053e94',
+		iconBtnBg: 'transparent', iconBtnLine: 'transparent', iconBtnRadius: '4px', iconBtnHover: 'rgba(21,20,26,0.1)', iconBtnActive: 'rgba(21,20,26,0.18)',
+		minColor: '#15141a', closeColor: '#15141a', closeHoverBg: '#e81123', closeActiveBg: '#c50f1f', closeHoverColor: '#ffffff',
+		menuRadius: '8px', menuLine: '#cfcfd8', menuHover: '#e0e0e6'
+	},
+	mono: {	// no color: black, white and grays; the states marked by darker grays
+		font: THEME_FONTS.segoe, radius: '2px', icons: 'mono',
+		scheme: 'light', accentColor: '#333333', bg: '#ffffff', bg2: '#f7f7f7', text: '#000000',
+		frame: '#333333', title: '#000000', bar: '#f2f2f2', section: '#ececec',
+		line: '#b0b0b0', lineSoft: '#e6e6e6', lineMid: '#cccccc', muted: '#555555', faded: '#9a9a9a', countTotal: '#bbbbbb',
+		icon: '#333333', accent: '#333333', danger: '#000000', linkHover: '#000000', rowHover: '#ededed',
+		ctlBg: '#ffffff', ctlText: '#000000', ctlLine: '#8a8a8a', ctlHover: '#e0e0e0',
+		ctlOffBg: '#f5f5f5', ctlOffText: '#9a9a9a', ctlOffLine: '#d0d0d0', chipBg: '#eeeeee',
+		primaryBg: '#222222', primaryText: '#ffffff', primaryHover: '#555555', helpText: '#222222', warn: '#555555',
+		shadow: 'rgba(0,0,0,0.25)', backdrop: 'rgba(0,0,0,0.35)',
+		waitBg: '#f2f2f2', waitLine: '#d0d0d0', waitText: '#555555', okBg: '#f2f2f2', okLine: '#cccccc', okText: '#000000',
+		koBg: '#222222', koLine: '#000000', koText: '#ffffff', doubtBg: '#dddddd', doubtLine: '#aaaaaa', doubtText: '#000000',
+		ctlActive: '#bdbdbd', primaryActive: '#000000', primaryActiveRing: 'inset 0 0 0 1px #ffffff',
+		iconBtnHover: '#e0e0e0', iconBtnActive: '#bdbdbd', closeHoverBg: '#000000', closeActiveBg: '#333333', closeHoverColor: '#ffffff',
+		menuLine: '#000000', menuHover: '#000000', menuHoverText: '#ffffff'
+	},
+	glass: {	// translucent boxes, the page blurred behind them; Download, OK and Save outlined, filled under the mouse
+		font: THEME_FONTS.segoe, radius: '6px', icons: 'glass',
+		scheme: 'light', accentColor: '#0067c0', bg: 'rgba(255,255,255,0.68)', bg2: 'rgba(255,255,255,0.4)', text: '#101010',
+		frame: 'rgba(255,255,255,0.85)', title: '#0b3a66', bar: 'rgba(255,255,255,0.4)', section: 'rgba(255,255,255,0.45)',
+		line: 'rgba(0,0,0,0.18)', lineSoft: 'rgba(0,0,0,0.08)', lineMid: 'rgba(0,0,0,0.14)', muted: '#3c3c3c', faded: '#6e6e6e', countTotal: '#8a8a8a',
+		icon: '#202020', accent: '#0067c0', danger: '#c42b1c', linkHover: '#003e92', rowHover: 'rgba(255,255,255,0.55)',
+		ctlBg: 'rgba(255,255,255,0.6)', ctlText: '#101010', ctlLine: 'rgba(0,0,0,0.15)', ctlHover: 'rgba(255,255,255,0.85)',
+		ctlOffBg: 'rgba(255,255,255,0.3)', ctlOffText: '#7a7a7a', ctlOffLine: 'rgba(0,0,0,0.08)', chipBg: 'rgba(255,255,255,0.6)',
+		primaryBg: 'rgba(255,255,255,0.4)', primaryText: '#0067c0', primaryHover: '#0067c0', helpText: '#101010', warn: '#d18a00',
+		shadow: 'rgba(0,0,0,0.25)', backdrop: 'rgba(0,0,0,0.15)',
+		waitBg: 'rgba(255,255,255,0.5)', waitLine: 'rgba(0,0,0,0.1)', waitText: '#3c3c3c',
+		okBg: 'rgba(223,246,221,0.75)', okLine: 'rgba(15,123,15,0.25)', okText: '#0f7b0f',
+		koBg: 'rgba(253,231,233,0.75)', koLine: 'rgba(196,43,28,0.25)', koText: '#c42b1c',
+		doubtBg: 'rgba(255,244,206,0.75)', doubtLine: 'rgba(157,93,0,0.25)', doubtText: '#9d5d00',
+		frameRadius: '4px', opacity: '0.92', blur: 'blur(18px) saturate(160%)', editBg: 'rgba(255,255,255,0.8)', editText: '#101010',
+		primaryHoverText: '#ffffff', primaryActive: '#005499',
+		iconBtnBg: 'transparent', iconBtnLine: 'transparent', iconBtnRadius: '6px', iconBtnHover: 'rgba(0,103,192,0.12)', iconBtnActive: 'rgba(0,103,192,0.22)',
+		minColor: '#202020', closeColor: '#202020', closeHoverBg: '#c42b1c', closeActiveBg: '#a52314', closeHoverColor: '#ffffff',
+		menuRadius: '6px', menuBg: 'rgba(255,255,255,0.88)', menuLine: 'rgba(0,0,0,0.12)', menuHover: 'rgba(0,103,192,0.12)'
+	},
+	legacy: {	// the look of the versions up to 0.13: Arial, the gray native buttons of the browser, black symbols
+		font: THEME_FONTS.arial, radius: '2px', icons: 'solid',
+		scheme: 'light', accentColor: 'auto', bg: '#ffffff', bg2: '#f7f9fc', text: '#000000',
+		frame: '#2b5c8a', title: '#000000', bar: '#ffffff', section: '#e4eef7',
+		line: '#a0a0a0', lineSoft: '#e3e8ef', lineMid: '#c9d6e6', muted: '#555555', faded: '#999999', countTotal: '#bababa',
+		icon: '#000000', accent: '#0075ff', danger: '#cc0000', linkHover: '#0000ff', rowHover: '#e3f0fa',
+		ctlBg: '#efefef', ctlText: '#000000', ctlLine: '#767676', ctlHover: '#e5e5e5',
+		ctlOffBg: '#f5f5f5', ctlOffText: '#8a8a8a', ctlOffLine: '#c8c8c8', chipBg: '#efefef',
+		primaryBg: '#efefef', primaryText: '#000000', primaryHover: '#e5e5e5', helpText: '#112233', warn: '#f0a000',
+		shadow: 'rgba(0,0,0,0.3)', backdrop: 'rgba(0,0,0,0.35)',
+		waitBg: '#ffffff', waitLine: '#ffffff', waitText: '#555555', okBg: '#ffffff', okLine: '#ffffff', okText: '#006600',
+		koBg: '#ffffff', koLine: '#ffffff', koText: '#cc0000', doubtBg: '#ffffff', doubtLine: '#ffffff', doubtText: '#a65f00',
+		minColor: '#000000', closeColor: '#000000', primaryLine: '#767676', primaryBorder: '1px',
+		ctlHoverLine: '#4f4f4f', ctlActiveLine: '#8d8d8d', ctlActive: '#f5f5f5', iconBtnActive: '#f5f5f5', closeActiveBg: '#f5f5f5', primaryActive: '#f5f5f5',
+		menuRadius: '0', menuLine: '#767676', menuHover: '#0078d7', menuHoverText: '#ffffff'
+	},
+	win11: {	// the neutral grays of Windows 11, its light blue; Download, OK and Save filled with it; its caption buttons
+		font: THEME_FONTS.segoeVariable, radius: '4px', icons: 'outline',
+		scheme: 'dark', accentColor: '#4cc2ff', bg: '#202020', bg2: '#272727', text: '#e6e6e6',
+		frame: '#4a4a4a', title: '#9fd3f5', bar: '#2b2b2b', section: '#2b2b2b',
+		line: '#3d3d3d', lineSoft: '#333333', lineMid: '#4a4a4a', muted: '#a0a0a0', faded: '#6e6e6e', countTotal: '#6e6e6e',
+		icon: '#d6d6d6', accent: '#4cc2ff', danger: '#ff8a8a', linkHover: '#6fd0ff', rowHover: '#2c3640',
+		ctlBg: '#2d2d2d', ctlText: '#f0f0f0', ctlLine: '#4f4f4f', ctlHover: '#383838',
+		ctlOffBg: '#262626', ctlOffText: '#6e6e6e', ctlOffLine: '#3a3a3a', chipBg: '#2d2d2d',
+		primaryBg: '#4cc2ff', primaryText: '#000000', primaryHover: '#6fd0ff', helpText: '#e6e6e6', warn: '#e0a030',
+		shadow: 'rgba(0,0,0,0.7)', backdrop: 'rgba(0,0,0,0.6)',
+		waitBg: '#2a2a2a', waitLine: '#444444', waitText: '#bbbbbb', okBg: '#1d3a26', okLine: '#2f6b40', okText: '#8fe0a2',
+		koBg: '#3d1f20', koLine: '#7a3436', koText: '#ff9d9d', doubtBg: '#3b2e14', doubtLine: '#7a5b1f', doubtText: '#ffc978',
+		// the buttons at the top right as the caption buttons of Windows: no frame, neutral icons, Close red under the
+		// mouse; the buttons pressed darker; the fields in the gray of the toolbars
+		frameRadius: '4px', editBg: '#2b2b2b', editText: '#e6e6e6', ctlActive: '#262626', primaryActive: '#3aa8e0',
+		iconBtnBg: 'transparent', iconBtnLine: 'transparent', iconBtnHover: 'rgba(255,255,255,0.08)', iconBtnActive: 'rgba(255,255,255,0.05)',
+		minColor: '#d6d6d6', closeColor: '#d6d6d6', closeHoverBg: '#c42b1c', closeActiveBg: '#a52316', closeHoverColor: '#ffffff',
+		menuRadius: '8px', menuBg: '#2c2c2c', menuLine: '#3d3d3d', menuHover: 'rgba(255,255,255,0.06)'
+	},
+	chrome: {	// the dark palette of Chrome, the colors of its own menus and dialogs, its buttons
+		font: THEME_FONTS.system, radius: '11px', icons: 'outline',
+		scheme: 'dark', accentColor: '#8ab4f8', bg: '#202124', bg2: '#28292c', text: '#e8eaed',
+		frame: '#5f6368', title: '#8ab4f8', bar: '#292a2d', section: '#292a2d',
+		line: '#3c4043', lineSoft: '#35363a', lineMid: '#5f6368', muted: '#9aa0a6', faded: '#70757a', countTotal: '#70757a',
+		icon: '#e8eaed', accent: '#8ab4f8', danger: '#f28b82', linkHover: '#aecbfa', rowHover: '#2d3446',
+		ctlBg: '#35363a', ctlText: '#e8eaed', ctlLine: '#5f6368', ctlHover: '#3c4043',
+		ctlOffBg: '#2a2b2e', ctlOffText: '#70757a', ctlOffLine: '#45474a', chipBg: '#35363a',
+		primaryBg: '#8ab4f8', primaryText: '#202124', primaryHover: '#aecbfa', helpText: '#e8eaed', warn: '#fdd663',
+		shadow: 'rgba(0,0,0,0.7)', backdrop: 'rgba(0,0,0,0.6)',
+		waitBg: '#2a2a2a', waitLine: '#444444', waitText: '#bbbbbb', okBg: '#1d3a26', okLine: '#2f6b40', okText: '#8fe0a2',
+		koBg: '#3d1f20', koLine: '#7a3436', koText: '#ff9d9d', doubtBg: '#3b2e14', doubtLine: '#7a5b1f', doubtText: '#ffc978',
+		// as the dialogs of Chrome: frames rounded by 8 px, round icon buttons without frame (Material), Download, OK and
+		// Save filled with its blue; the fields in the gray of its fields
+		frameRadius: '8px', editBg: '#28292c', editText: '#e8eaed', ctlActive: '#4a4d51', primaryLine: '#8ab4f8', primaryActive: '#669df6',
+		iconBtnBg: 'transparent', iconBtnLine: 'transparent', iconBtnRadius: '50%', iconBtnHover: 'rgba(232,234,237,0.1)', iconBtnActive: 'rgba(232,234,237,0.18)',
+		minColor: '#e8eaed', closeColor: '#e8eaed', closeHoverBg: 'rgba(242,139,130,0.2)', closeActiveBg: 'rgba(242,139,130,0.3)', closeHoverColor: '#f28b82',
+		menuRadius: '8px', menuBg: '#292a2d', menuLine: '#3c4043', menuHover: '#3c4043'
+	},
+	steel: {	// the steel blue of the light theme, in the dark
+		font: THEME_FONTS.segoe, radius: '3px', icons: 'solid',
+		scheme: 'dark', accentColor: '#4da3ff', bg: '#17202b', bg2: '#1c2733', text: '#dbe4ee',
+		frame: '#4a7fb0', title: '#7fb6ec', bar: '#1f2d3d', section: '#1f2d3d',
+		line: '#2f4257', lineSoft: '#263646', lineMid: '#3f5873', muted: '#9fb0c2', faded: '#5f7186', countTotal: '#5f7186',
+		icon: '#c9d6e3', accent: '#4da3ff', danger: '#ff7a7a', linkHover: '#8cc8ff', rowHover: '#20354d',
+		ctlBg: '#1b2633', ctlText: '#e6eef6', ctlLine: '#3f5873', ctlHover: '#24364a',
+		ctlOffBg: '#18212c', ctlOffText: '#5f7186', ctlOffLine: '#2c3d50', chipBg: '#1f2d3d',
+		primaryBg: '#1b2633', primaryText: '#ffffff', primaryHover: '#4da3ff', helpText: '#dbe4ee', warn: '#e0a030',
+		shadow: 'rgba(0,0,0,0.7)', backdrop: 'rgba(0,0,0,0.6)',
+		waitBg: '#2a2a2a', waitLine: '#444444', waitText: '#bbbbbb', okBg: '#1d3a26', okLine: '#2f6b40', okText: '#8fe0a2',
+		koBg: '#3d1f20', koLine: '#7a3436', koText: '#ff9d9d', doubtBg: '#3b2e14', doubtLine: '#7a5b1f', doubtText: '#ffc978',
+		// as Default light: every frame rounded by 4 px, a light blue border under the mouse, a steel blue background
+		// pressed, Download, OK and Save filled with blue under the mouse, Close red; the fields in the blue of the theme
+		frameRadius: '4px', editBg: '#1c2733', editText: '#dbe4ee',
+		ctlHoverLine: '#7fb6ec', ctlActive: '#2c4560', ctlActiveLine: '#7fb6ec', iconBtnHover: '#24364a', iconBtnActive: '#2c4560',
+		primaryHoverText: '#0b1622', primaryActive: '#2f86e8', closeHoverBg: '#c94a4a', closeActiveBg: '#a83a3a', closeHoverColor: '#ffffff',
+		menuRadius: '4px', menuHover: '#24364a'
+	},
+	oled: {	// pure black, the highest contrast
+		font: THEME_FONTS.segoe, radius: '0', icons: 'solid',
+		scheme: 'dark', accentColor: '#3d9bff', bg: '#000000', bg2: '#0d0d0d', text: '#f2f2f2',
+		frame: '#555555', title: '#6fb3ff', bar: '#141414', section: '#141414',
+		line: '#333333', lineSoft: '#262626', lineMid: '#444444', muted: '#a0a0a0', faded: '#6a6a6a', countTotal: '#6a6a6a',
+		icon: '#e0e0e0', accent: '#3d9bff', danger: '#ff5c5c', linkHover: '#80c0ff', rowHover: '#1a2533',
+		ctlBg: '#1a1a1a', ctlText: '#ffffff', ctlLine: '#5a5a5a', ctlHover: '#262626',
+		ctlOffBg: '#111111', ctlOffText: '#6a6a6a', ctlOffLine: '#333333', chipBg: '#1a1a1a',
+		primaryBg: '#000000', primaryText: '#ffffff', primaryHover: '#3d9bff', helpText: '#f2f2f2', warn: '#e0a030',
+		shadow: 'rgba(0,0,0,0.8)', backdrop: 'rgba(0,0,0,0.7)',
+		waitBg: '#2a2a2a', waitLine: '#444444', waitText: '#bbbbbb', okBg: '#1d3a26', okLine: '#2f6b40', okText: '#8fe0a2',
+		koBg: '#3d1f20', koLine: '#7a3436', koText: '#ff9d9d', doubtBg: '#3b2e14', doubtLine: '#7a5b1f', doubtText: '#ffc978',
+		// the highest contrast: square frames, a white border under the mouse, Download, OK and Save filled with blue
+		// under the mouse, Close red with a black cross; the fields black as the rest
+		editBg: '#000000', editText: '#f2f2f2', ctlHoverLine: '#ffffff', ctlActive: '#333333', ctlActiveLine: '#ffffff', iconBtnActive: '#333333',
+		primaryHoverText: '#000000', primaryActive: '#1f7ae0', closeHoverBg: '#ff5c5c', closeActiveBg: '#e04040', closeHoverColor: '#000000',
+		menuLine: '#ffffff'
+	}
+};
 
 // The CSS of the popup, scoped to it (div#theDiv, div#divBody, SF-2.6): it sets every size of its
 // toolbars and of its rows itself, whatever the styles of the page (SF-2.5)
 var POPUP_CSS = ' \
+		div#theDiv { background-color: var(--eml-bg); opacity: var(--eml-opacity, 0.97); color: var(--eml-text); border: 2px solid var(--eml-frame); accent-color: var(--eml-accentColor); \
+			border-radius: var(--eml-frameRadius, 0); } \
 		div#theDiv button { \
 			font-size:11px;\
 		} \
@@ -131,40 +396,81 @@ var POPUP_CSS = ' \
 			display: flex; align-items: center; gap: 6px; flex: none; \
 			padding: 5px 9px; \
 			margin: 0 -5px; border: 0; height: auto; min-height: 0; width: auto; float: none; position: static; box-sizing: content-box; \
-			background: #e8f1fb; box-shadow: none; \
+			background: var(--eml-bar); box-shadow: none; \
 		} \
 		div#theDiv .toolbar button, div#theDiv .toolbar select { \
 			height: 22px; min-height: 0; max-height: none; box-sizing: border-box; margin: 0; padding: 0 8px; \
 			font-size: 12px; font-weight: normal; line-height: normal; vertical-align: middle; \
 		} \
-		div#theDiv .toolbar select.emlCat { min-width: ' + categoryListMinWidth + 'px; max-width: ' + categoryListMaxWidth + 'px; } \
-		div#theDiv .toolbar select.emlSrv { max-width: ' + serverListMaxWidth + 'px; } \
+		div#theDiv .toolbar select.emlCat { min-width: ' + categoryListMinWidth + 'ch; max-width: ' + categoryListMaxWidth + 'ch; } \
+		div#theDiv .toolbar select.emlSrv { max-width: ' + serverListMaxWidth + 'ch; } \
 		div#theDiv .toolbar button, div#theDiv .toolbar select { \
-			background-color: #ffffff; color: #000000; border: 1px solid #8f8f9d; border-radius: 3px; \
+			background-color: var(--eml-ctlBg); color: var(--eml-ctlText); border: 1px solid var(--eml-ctlLine); border-radius: var(--eml-radius); \
 		} \
-		div#theDiv .toolbar button:hover, div#theDiv .toolbar select:hover { background-color: #f3f8fd; } \
+		div#theDiv .toolbar button:hover, div#theDiv .toolbar select:hover { background-color: var(--eml-ctlHover); } \
+		div#theDiv .toolbar button:not(.emlIcon):not(.emlAdd):hover:enabled, div#theDiv .toolbar select:hover:enabled { \
+			border-color: var(--eml-ctlHoverLine, var(--eml-ctlLine)); \
+		} \
+		div#theDiv .toolbar button:not(.emlIcon):not(.emlAdd):active:enabled { \
+			background-color: var(--eml-ctlActive, var(--eml-ctlHover)); border-color: var(--eml-ctlActiveLine, var(--eml-ctlHoverLine, var(--eml-ctlLine))); \
+		} \
 		div#theDiv .toolbar button:disabled, div#theDiv .toolbar select:disabled { \
-			background-color: #f5f5f5; color: #8a8a8a; border-color: #c8c8c8; \
+			background-color: var(--eml-ctlOffBg); color: var(--eml-ctlOffText); border-color: var(--eml-ctlOffLine); \
 		} \
 		div#theDiv .toolbar button.emlIcon { \
-			width: 22px; padding: 0; display: inline-flex; align-items: center; justify-content: center; color: #333333; \
+			width: var(--eml-iconBtnSize, 22px); height: var(--eml-iconBtnSize, 22px); padding: 0; \
+			display: inline-flex; align-items: center; justify-content: center; color: var(--eml-icon); \
+			background-color: var(--eml-iconBtnBg, var(--eml-ctlBg)); border-color: var(--eml-iconBtnLine, var(--eml-ctlLine)); \
+			border-radius: var(--eml-iconBtnRadius, var(--eml-radius)); \
 		} \
-		div#theDiv .toolbar button.emlIcon svg { display: block; } \
-		div#theDiv .toolbar button#emlMin { color: #0075ff; } \
-		div#theDiv .toolbar button#emlClose { color: #d00000; } \
-		div#theDiv .toolbar button.emlAdd { border: 2px solid #0075ff; border-radius: 3px; background: #ffffff; color: #000; } \
-		div#theDiv .toolbar button.emlAdd:hover { background: #f3f8fd; } \
-		div#theDiv .toolbar button.emlAdd:disabled { border-color: #bbbbbb; color: #888888; background: #efefef; } \
+		div#theDiv .toolbar button.emlIcon:hover { \
+			background-color: var(--eml-iconBtnHover, var(--eml-ctlHover)); border-color: var(--eml-ctlHoverLine, var(--eml-iconBtnLine, var(--eml-ctlLine))); \
+		} \
+		div#theDiv .toolbar button.emlIcon:active { \
+			background-color: var(--eml-iconBtnActive, var(--eml-iconBtnHover, var(--eml-ctlHover))); \
+			border-color: var(--eml-ctlActiveLine, var(--eml-ctlHoverLine, var(--eml-iconBtnLine, var(--eml-ctlLine)))); \
+		} \
+		div#theDiv .toolbar button.emlIcon svg { display: block; width: var(--eml-iconSize, 12px); height: var(--eml-iconSize, 12px); } \
+		div#theDiv .toolbar button#emlMin { color: var(--eml-minColor, var(--eml-accent)); } \
+		div#theDiv .toolbar button#emlMin svg[data-eml-icon="maximize"] { color: var(--eml-maxColor, var(--eml-minColor, var(--eml-accent))); } \
+		div#theDiv .toolbar button#emlClose { color: var(--eml-closeColor, var(--eml-danger)); } \
+		div#theDiv .toolbar button#emlClose:hover { \
+			background-color: var(--eml-closeHoverBg, var(--eml-iconBtnHover, var(--eml-ctlHover))); \
+			color: var(--eml-closeHoverColor, var(--eml-closeColor, var(--eml-danger))); \
+		} \
+		div#theDiv .toolbar button#emlClose:active { \
+			background-color: var(--eml-closeActiveBg, var(--eml-closeHoverBg, var(--eml-iconBtnActive, var(--eml-iconBtnHover, var(--eml-ctlHover))))); \
+		} \
+		div#theDiv .toolbar button.emlAdd { \
+			border: var(--eml-primaryBorder, 2px) solid var(--eml-primaryLine, var(--eml-accent)); border-radius: var(--eml-radius); \
+			background: var(--eml-primaryBg); color: var(--eml-primaryText); \
+		} \
+		div#theDiv .toolbar button.emlAdd:hover { \
+			background: var(--eml-primaryHover); color: var(--eml-primaryHoverText, var(--eml-primaryText)); \
+			border-color: var(--eml-ctlHoverLine, var(--eml-primaryLine, var(--eml-accent))); \
+		} \
+		div#theDiv .toolbar button.emlAdd:active:enabled { \
+			background: var(--eml-primaryActive, var(--eml-primaryHover)); box-shadow: var(--eml-primaryActiveRing, none); \
+			border-color: var(--eml-ctlActiveLine, var(--eml-ctlHoverLine, var(--eml-primaryLine, var(--eml-accent)))); \
+		} \
+		div#theDiv .toolbar button.emlAdd:disabled { border-color: var(--eml-ctlOffLine); color: var(--eml-ctlOffText); background: var(--eml-ctlOffBg); } \
 		div#theDiv .toolbar .emlRight { margin-left: auto; } \
-		div#theDiv .emlCount { text-align: left; font-size: 12px; font-variant-numeric: tabular-nums; font-weight: bold; color: #0075ff; white-space: nowrap; } \
-		div#theDiv .emlCount span { color: #bababa; font-weight: normal; } \
+		div#theDiv .toolbar > * { flex: none; } \
+		div#theDiv .toolbar > .emlDrag { flex: 1 0 auto; width: 24px; align-self: stretch; } \
+		div#theDiv .toolbar > .emlOff { display: none; } \
+		div#theDiv:not(.emlMenuOn) .toolbar button.emlMenu, div#theDiv.emlMenuOn .toolbar button.emlIcon:not(.emlMenu), \
+			div#theDiv .toolbar > .emlFolded { display: none; } \
+		div#theDiv textarea { font-family: Consolas, "Courier New", monospace; font-size: 11px; \
+			background-color: var(--eml-editBg, Field); color: var(--eml-editText, FieldText); } \
+		div#theDiv .emlCount { text-align: left; font-size: 12px; font-variant-numeric: tabular-nums; font-weight: bold; color: var(--eml-accent); white-space: nowrap; } \
+		div#theDiv .emlCount span { color: var(--eml-countTotal); font-weight: normal; } \
 		div#divBody a {font-size: 10px;} \
-		div#divBody a.ed2k:link       { color: #000000; text-decoration: none } \
-		div#divBody a.ed2k:visited    { color: #000000; text-decoration: none } \
-		div#divBody a.ed2k:hover      { color: #0000FF; text-decoration: underline; font-weight: normal } \
-		div#divBody a.ed2k:active     { color: #0000FF; text-decoration: underline; font-weight: normal } \
-		div#divBody tr.filtered td, div#divBody tr.filtered a.ed2k { color: #999999 } \
-		div#divBody tr.filtered a.ed2k:hover { color: #0000FF } \
+		div#divBody a.ed2k:link       { color: var(--eml-text); text-decoration: none } \
+		div#divBody a.ed2k:visited    { color: var(--eml-text); text-decoration: none } \
+		div#divBody a.ed2k:hover      { color: var(--eml-linkHover); text-decoration: underline; font-weight: normal } \
+		div#divBody a.ed2k:active     { color: var(--eml-linkHover); text-decoration: underline; font-weight: normal } \
+		div#divBody tr.filtered td, div#divBody tr.filtered a.ed2k { color: var(--eml-faded) } \
+		div#divBody tr.filtered a.ed2k:hover { color: var(--eml-linkHover) } \
 		div#divBody input.bigcheck { \
 			height: 16px; \
 			width: 16px; \
@@ -177,61 +483,73 @@ var POPUP_CSS = ' \
 			width: 100%; \
 		} \
 		div#divBody td { \
-			background: #FFFFFF; padding: 1px 4px; line-height: 15px;} \
+			background: var(--eml-bg); padding: 1px 4px; line-height: 15px;} \
 		div#divBody td:first-child { padding: 1px 0 1px 4px; width: 13px; } \
 		div#divBody td:nth-child(2) { padding-left: 6px; } \
-		div#divBody td:last-child { text-align: right; width: 1px; white-space: nowrap; } \
+		div#divBody td:last-child { text-align: right; width: 1px; min-width: 40px; white-space: nowrap; } \
 		div#theDiv > div#divBody.emlList { \
-			margin: 0 -5px; padding: 0 5px; border-top: 1px solid #a0a0a0; border-bottom: 1px solid #a0a0a0; \
+			margin: 0 -5px; padding: 0 5px; border-top: 1px solid var(--eml-line); border-bottom: 1px solid var(--eml-line); \
 		} \
 		div#theDiv .emlShadow { position: absolute; height: 7px; margin: 0; padding: 0; border: 0; pointer-events: none; display: none; } \
-		div#theDiv .emlShadow.top { background: linear-gradient(rgba(0,0,0,0.3), rgba(0,0,0,0)); } \
-		div#theDiv .emlShadow.bottom { background: linear-gradient(rgba(0,0,0,0), rgba(0,0,0,0.3)); } \
+		div#theDiv .emlShadow.top { background: linear-gradient(var(--eml-shadow), transparent); } \
+		div#theDiv .emlShadow.bottom { background: linear-gradient(transparent, var(--eml-shadow)); } \
 		div#divBody th { \
-			background: #FFFFFF; padding: 0px 4px;} \
+			background: var(--eml-bg); padding: 0px 4px;} \
 		div#divBody tr { \
-			background: #FFFFFF; \
+			background: var(--eml-bg); \
 		} \
 		div#divBody tr:hover td { \
-			background: #e3f0fa; \
+			background: var(--eml-rowHover); \
 		} \
 		div#theDiv div, div#divBody td, div#divBody th { text-align: left; } \
-		div#theDiv, div#theDiv * { letter-spacing: normal; word-spacing: normal; text-transform: none; \
+		div#theDiv, div#theDiv * { font-family: var(--eml-font); letter-spacing: normal; word-spacing: normal; text-transform: none; \
 			text-indent: 0; font-style: normal; } \
 ';
 
-// The CSS of the message shown when the popup is closed (I-3), scoped to it (div#emlMsg): the look of
+// The CSS of the message shown when the popup is closed (SF-10.4), scoped to it (div#emlMsg): the look of
 // the popup, every size set whatever the styles of the page, as the popup (SF-2.6); centered in the
 // window, on a backdrop as the settings dialog (div#emlMsgBackdrop)
 var MESSAGE_CSS = ' \
 		div#emlMsgBackdrop { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 998; margin: 0; padding: 0; \
-			background: rgba(0,0,0,.35); } \
+			background: var(--eml-backdrop); } \
 		div#emlMsg { \
 			position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 999; \
 			width: 380px; max-width: calc(100vw - 4px); box-sizing: border-box; \
-			margin: 0; padding: 0; background: #ffffff; opacity: 1; color: #000000; border: 2px solid #2b5c8a; \
-			font-size: 12px; line-height: 1.4; text-align: left; \
+			margin: 0; padding: 0; background: var(--eml-bg); opacity: 1; color: var(--eml-text); border: 2px solid var(--eml-frame); accent-color: var(--eml-accentColor); \
+			border-radius: var(--eml-frameRadius, 0); overflow: hidden; font-size: 12px; line-height: 1.4; text-align: left; \
 		} \
-		div#emlMsg, div#emlMsg * { letter-spacing: normal; word-spacing: normal; text-transform: none; \
+		div#emlMsg, div#emlMsg * { font-family: var(--eml-font); letter-spacing: normal; word-spacing: normal; text-transform: none; \
 			text-indent: 0; font-style: normal; } \
-		div#emlMsg .emlMsgBar { display: flex; align-items: center; gap: 6px; margin: 0; padding: 5px 9px; background: #e8f1fb; } \
-		div#emlMsg .emlMsgBar.bottom { border-top: 1px solid #a0a0a0; } \
-		div#emlMsg .emlMsgTitle { font-weight: bold; color: #2b5c8a; } \
+		div#emlMsg .emlMsgBar { display: flex; align-items: center; gap: 6px; margin: 0; padding: 5px 9px; background: var(--eml-bar); } \
+		div#emlMsg .emlMsgBar.bottom { border-top: 1px solid var(--eml-line); } \
+		div#emlMsg .emlMsgTitle { font-weight: bold; color: var(--eml-title); } \
 		div#emlMsg .emlMsgText { margin: 0; padding: 8px 9px; } \
 		div#emlMsg .emlMsgText ul { margin: 4px 0 8px; padding: 0 0 0 22px; list-style: disc; } \
 		div#emlMsg .emlMsgText li { margin: 0; padding: 0; } \
-		div#emlMsg .emlMsgText a { color: #0075ff; text-decoration: underline; } \
+		div#emlMsg .emlMsgText a { color: var(--eml-accent); text-decoration: underline; } \
 		div#emlMsg b { font-weight: bold; } \
 		div#emlMsg button { \
 			height: 22px; min-height: 0; max-height: none; box-sizing: border-box; margin: 0 0 0 auto; padding: 0 8px; \
 			font-size: 12px; font-weight: normal; line-height: normal; \
 		} \
-		div#emlMsg button#emlMsgOk { border: 2px solid #0075ff; border-radius: 3px; background: #ffffff; color: #000000; } \
-		div#emlMsg button#emlMsgOk:hover { background: #f3f8fd; } \
+		div#emlMsg button#emlMsgOk { border: var(--eml-primaryBorder, 2px) solid var(--eml-primaryLine, var(--eml-accent)); border-radius: var(--eml-radius); \
+			background: var(--eml-primaryBg); color: var(--eml-primaryText); } \
+		div#emlMsg button#emlMsgOk:hover { background: var(--eml-primaryHover); color: var(--eml-primaryHoverText, var(--eml-primaryText)); \
+			border-color: var(--eml-ctlHoverLine, var(--eml-primaryLine, var(--eml-accent))); } \
+		div#emlMsg button#emlMsgOk:active { background: var(--eml-primaryActive, var(--eml-primaryHover)); box-shadow: var(--eml-primaryActiveRing, none); \
+			border-color: var(--eml-ctlActiveLine, var(--eml-ctlHoverLine, var(--eml-primaryLine, var(--eml-accent)))); } \
 		div#emlMsg button#emlMsgClose { \
-			width: 22px; padding: 0; display: inline-flex; align-items: center; justify-content: center; color: #d00000; \
+			width: var(--eml-iconBtnSize, 22px); height: var(--eml-iconBtnSize, 22px); padding: 0; \
+			display: inline-flex; align-items: center; justify-content: center; color: var(--eml-closeColor, var(--eml-danger)); \
+			background-color: var(--eml-iconBtnBg, var(--eml-ctlBg)); border: 1px solid var(--eml-iconBtnLine, var(--eml-ctlLine)); \
+			border-radius: var(--eml-iconBtnRadius, var(--eml-radius)); \
 		} \
+		div#emlMsg button#emlMsgClose:hover { background-color: var(--eml-closeHoverBg, var(--eml-iconBtnHover, var(--eml-ctlHover))); \
+			color: var(--eml-closeHoverColor, var(--eml-closeColor, var(--eml-danger))); } \
+		div#emlMsg button#emlMsgClose:active { \
+			background-color: var(--eml-closeActiveBg, var(--eml-closeHoverBg, var(--eml-iconBtnActive, var(--eml-iconBtnHover, var(--eml-ctlHover))))); } \
 		div#emlMsg button svg { display: block; } \
+		div#emlMsg button#emlMsgClose svg { width: var(--eml-iconSize, 12px); height: var(--eml-iconSize, 12px); } \
 		div#emlMsg label { \
 			display: inline-flex; align-items: center; gap: 4px; margin: 0; padding: 0; white-space: nowrap; \
 			font-size: 12px; font-weight: normal; \
@@ -239,58 +557,73 @@ var MESSAGE_CSS = ' \
 		div#emlMsg input { width: 13px; height: 13px; margin: 0; } \
 ';
 
-// The CSS of the help (I-5), scoped to it (div#emlHelp): the look of the popup, every size set whatever
+// The CSS of the help (SF-11), scoped to it (div#emlHelp): the look of the popup, every size set whatever
 // the styles of the page, as the popup (SF-2.6); placed by placeHelp()
 var HELP_CSS = ' \
 		div#emlHelp { \
 			position: fixed; top: 0; left: 0; z-index: 256; width: 560px; max-width: calc(100vw - 20px); max-height: calc(100vh - 20px); \
 			display: flex; flex-direction: column; box-sizing: border-box; margin: 0; padding: 0; \
-			background: #ffffff; opacity: 1; color: #000000; border: 2px solid #2b5c8a; box-shadow: 0 4px 18px rgba(0,0,0,0.25); \
+			background: var(--eml-bg); opacity: 1; color: var(--eml-text); border: 2px solid var(--eml-frame); accent-color: var(--eml-accentColor); box-shadow: 0 4px 18px var(--eml-backdrop); \
+			border-radius: var(--eml-frameRadius, 0); overflow: hidden; \
 			font-size: 12px; line-height: 1.4; text-align: left; \
 		} \
-		div#emlHelp, div#emlHelp * { letter-spacing: normal; word-spacing: normal; text-transform: none; \
+		div#emlHelp, div#emlHelp * { font-family: var(--eml-font); letter-spacing: normal; word-spacing: normal; text-transform: none; \
 			text-indent: 0; font-style: normal; } \
-		div#emlHelp .emlHelpBar { display: flex; align-items: center; gap: 6px; flex: none; margin: 0; padding: 5px 9px; background: #e8f1fb; } \
-		div#emlHelp .emlHelpBar.bottom { border-top: 1px solid #a0a0a0; } \
+		div#emlHelp .emlHelpBar { display: flex; align-items: center; gap: 6px; flex: none; margin: 0; padding: 5px 9px; background: var(--eml-bar); } \
+		div#emlHelp .emlHelpBar.bottom { border-top: 1px solid var(--eml-line); } \
 		div#emlHelp .emlHelpHead { cursor: move; user-select: none; touch-action: none; } \
 		div#emlHelp .emlHelpHead button { cursor: default; } \
-		div#emlHelp .emlHelpTitle { font-weight: bold; color: #2b5c8a; } \
+		div#emlHelp .emlHelpTitle { font-weight: bold; color: var(--eml-title); } \
 		div#emlHelp .emlHelpBody { overflow: auto; margin: 0; padding: 4px 12px 10px; } \
 		div#emlHelp p { margin: 8px 0 0; padding: 0; } \
-		div#emlHelp h4 { margin: 10px 0 4px; padding: 0; border: 0; background: none; font-size: 12px; font-weight: bold; color: #2b5c8a; } \
+		div#emlHelp h4 { margin: 10px 0 4px; padding: 0; border: 0; background: none; font-size: 12px; font-weight: bold; color: var(--eml-title); } \
 		div#emlHelp ul { margin: 2px 0; padding: 0 0 0 20px; list-style: disc; } \
 		div#emlHelp li { margin: 0; padding: 0; } \
 		div#emlHelp table { border-collapse: collapse; width: 100%; margin: 0; border: 0; box-shadow: none; background: none; } \
 		div#emlHelp tr, div#emlHelp td { background: none; box-shadow: none; } \
-		div#emlHelp td { padding: 3px 6px; vertical-align: middle; border: 0; border-top: 1px solid #e3e3e3; font-size: 12px; } \
+		div#emlHelp td { padding: 3px 6px; vertical-align: middle; border: 0; border-top: 1px solid var(--eml-lineSoft); font-size: 12px; } \
 		div#emlHelp td:first-child { white-space: nowrap; width: 1px; } \
-		div#emlHelp td:last-child { white-space: nowrap; width: 1px; color: #333333; font-weight: bold; } \
+		div#emlHelp td:last-child { white-space: nowrap; width: 1px; color: var(--eml-icon); font-weight: bold; } \
 		div#emlHelp b { font-weight: bold; } \
-		div#emlHelp a { color: #0075ff; text-decoration: underline; } \
-		div#emlHelp .emlHelpSep { color: #a0a0a0; } \
+		div#emlHelp a { color: var(--eml-accent); text-decoration: underline; } \
+		div#emlHelp .emlHelpSep { color: var(--eml-faded); } \
 		div#emlHelp .emlChip { \
 			display: inline-flex; align-items: center; justify-content: center; height: 20px; min-width: 20px; box-sizing: border-box; \
-			margin: 0; padding: 0 6px; border: 1px solid #767676; border-radius: 3px; background: #efefef; color: #000000; \
+			margin: 0; padding: 0 6px; border: 1px solid var(--eml-ctlLine); border-radius: var(--eml-radius); background: var(--eml-chipBg); color: var(--eml-text); \
 			font-size: 11px; font-weight: normal; vertical-align: middle; \
 		} \
-		div#emlHelp .emlChip.icon { width: 20px; padding: 0; } \
-		div#emlHelp .emlChip.add { border: 2px solid #0075ff; background: #ffffff; } \
-		div#emlHelp .emlChip.count { border: 0; background: none; padding: 0; color: #0075ff; font-weight: bold; } \
-		div#emlHelp .emlChip.count span { color: #808080; } \
-		div#emlHelp .emlChip.min { color: #0075ff; } \
-		div#emlHelp .emlChip.close { color: #d00000; } \
+		div#emlHelp .emlChip.icon { width: 20px; padding: 0; background: var(--eml-iconBtnBg, var(--eml-chipBg)); \
+			border-color: var(--eml-iconBtnLine, var(--eml-ctlLine)); border-radius: var(--eml-iconBtnRadius, var(--eml-radius)); } \
+		div#emlHelp .emlChip.add { border: var(--eml-primaryBorder, 2px) solid var(--eml-primaryLine, var(--eml-accent)); background: var(--eml-primaryBg); color: var(--eml-primaryText); } \
+		div#emlHelp .emlChip.count { border: 0; background: none; padding: 0; color: var(--eml-accent); font-weight: bold; } \
+		div#emlHelp .emlChip.count span { color: var(--eml-countTotal); } \
+		div#emlHelp .emlChip.min { color: var(--eml-minColor, var(--eml-accent)); } \
+		div#emlHelp .emlChip.min svg[data-eml-icon="maximize"] { color: var(--eml-maxColor, var(--eml-minColor, var(--eml-accent))); } \
+		div#emlHelp .emlChip.close { color: var(--eml-closeColor, var(--eml-danger)); } \
 		div#emlHelp .emlChip svg { display: block; } \
 		div#emlHelp .emlChip input { width: 13px; height: 13px; margin: 0; pointer-events: none; } \
 		div#emlHelp button { \
 			height: 22px; min-height: 0; max-height: none; box-sizing: border-box; margin: 0 0 0 auto; padding: 0 8px; \
 			font-size: 12px; font-weight: normal; line-height: normal; \
 		} \
-		div#emlHelp button#emlHelpOk { border: 2px solid #0075ff; border-radius: 3px; background: #ffffff; color: #000000; } \
-		div#emlHelp button#emlHelpOk:hover { background: #f3f8fd; } \
+		div#emlHelp button#emlHelpOk { border: var(--eml-primaryBorder, 2px) solid var(--eml-primaryLine, var(--eml-accent)); border-radius: var(--eml-radius); \
+			background: var(--eml-primaryBg); color: var(--eml-primaryText); } \
+		div#emlHelp button#emlHelpOk:hover { background: var(--eml-primaryHover); color: var(--eml-primaryHoverText, var(--eml-primaryText)); \
+			border-color: var(--eml-ctlHoverLine, var(--eml-primaryLine, var(--eml-accent))); } \
+		div#emlHelp button#emlHelpOk:active { background: var(--eml-primaryActive, var(--eml-primaryHover)); box-shadow: var(--eml-primaryActiveRing, none); \
+			border-color: var(--eml-ctlActiveLine, var(--eml-ctlHoverLine, var(--eml-primaryLine, var(--eml-accent)))); } \
 		div#emlHelp button#emlHelpClose { \
-			width: 22px; padding: 0; display: inline-flex; align-items: center; justify-content: center; color: #d00000; \
+			width: var(--eml-iconBtnSize, 22px); height: var(--eml-iconBtnSize, 22px); padding: 0; \
+			display: inline-flex; align-items: center; justify-content: center; color: var(--eml-closeColor, var(--eml-danger)); \
+			background-color: var(--eml-iconBtnBg, var(--eml-ctlBg)); border: 1px solid var(--eml-iconBtnLine, var(--eml-ctlLine)); \
+			border-radius: var(--eml-iconBtnRadius, var(--eml-radius)); \
 		} \
+		div#emlHelp button#emlHelpClose:hover { background-color: var(--eml-closeHoverBg, var(--eml-iconBtnHover, var(--eml-ctlHover))); \
+			color: var(--eml-closeHoverColor, var(--eml-closeColor, var(--eml-danger))); } \
+		div#emlHelp button#emlHelpClose:active { \
+			background-color: var(--eml-closeActiveBg, var(--eml-closeHoverBg, var(--eml-iconBtnActive, var(--eml-iconBtnHover, var(--eml-ctlHover))))); } \
 		div#emlHelp button svg { display: block; } \
+		div#emlHelp button#emlHelpClose svg { width: var(--eml-iconSize, 12px); height: var(--eml-iconSize, 12px); } \
 ';
 
 // The CSS of the band of the answer of a client (SF-7.10), scoped to it (div#emlStatus): under the top
@@ -300,15 +633,15 @@ var STATUS_CSS = ' \
 		div#emlStatus { \
 			position: absolute; left: 0; right: 0; z-index: 3; display: flex; align-items: center; gap: 6px; \
 			margin: 0; padding: 4px 9px; box-sizing: border-box; border: 0; border-top: 1px solid; border-bottom: 1px solid; \
-			font-size: 12px; font-weight: bold; line-height: 16px; text-align: left; letter-spacing: normal; text-transform: none; \
+			font-family: var(--eml-font); font-size: 12px; font-weight: bold; line-height: 16px; text-align: left; letter-spacing: normal; text-transform: none; \
 		} \
-		div#emlStatus.wait { background: #f2f2f2; border-color: #d0d0d0; } \
-		div#emlStatus.ok { background: #e6f4ea; border-color: #b7dfc3; } \
-		div#emlStatus.ko { background: #fdecea; border-color: #f3c0c0; } \
-		div#emlStatus.doubt { background: #fff4e5; border-color: #f0d2a6; } \
+		div#emlStatus.wait { background: var(--eml-waitBg); border-color: var(--eml-waitLine); color: var(--eml-waitText); } \
+		div#emlStatus.ok { background: var(--eml-okBg); border-color: var(--eml-okLine); color: var(--eml-okText); } \
+		div#emlStatus.ko { background: var(--eml-koBg); border-color: var(--eml-koLine); color: var(--eml-koText); } \
+		div#emlStatus.doubt { background: var(--eml-doubtBg); border-color: var(--eml-doubtLine); color: var(--eml-doubtText); } \
 		div#emlStatus.toast { \
 			position: fixed; left: auto; right: auto; top: auto; bottom: auto; z-index: 255; max-width: calc(100vw - 4px); \
-			border-width: 1px; border-style: solid; box-shadow: 0 2px 8px rgba(0,0,0,0.2); \
+			border-width: 1px; border-style: solid; box-shadow: 0 2px 8px var(--eml-shadow); border-radius: var(--eml-frameRadius, 0); \
 		} \
 		div#emlStatus svg { display: block; flex: none; } \
 		div#emlStatus .emlStatusIcon:empty { display: none; } \
@@ -318,17 +651,102 @@ var STATUS_CSS = ' \
 		} \
 ';
 
-// The icons of the top toolbar, drawn: centered in their buttons whatever the fonts of the system (I-2)
+// The CSS of the menu of the toolbars (SF-2.13), scoped to it (div#emlMenu): under its button, the controls that do
+// not fit in the toolbars; every size set whatever the styles of the page, as the popup (SF-2.6)
+var MENU_CSS = ' \
+		div#emlMenu { position: fixed; z-index: 300; min-width: min(200px, calc(100vw - 8px)); max-width: calc(100vw - 8px); box-sizing: border-box; margin: 0; padding: 4px 0; \
+			max-height: calc(100vh - 8px); overflow-y: auto; \
+			background: var(--eml-menuBg, var(--eml-bg)); color: var(--eml-text); border: 1px solid var(--eml-menuLine, var(--eml-ctlLine)); \
+			border-radius: var(--eml-menuRadius, var(--eml-radius)); box-shadow: 0 4px 14px var(--eml-shadow); accent-color: var(--eml-accentColor); font-size: 12px; line-height: normal; text-align: left; } \
+		div#emlMenu, div#emlMenu * { font-family: var(--eml-font); letter-spacing: normal; word-spacing: normal; text-transform: none; \
+			text-indent: 0; font-style: normal; } \
+		div#emlMenu .emlMenuRow { display: flex; align-items: center; gap: 8px; box-sizing: border-box; width: 100%; height: auto; min-height: 0; \
+			margin: 0; padding: 4px 10px; white-space: nowrap; font-size: 12px; font-weight: normal; } \
+		div#emlMenu label.emlMenuRow > span { flex: none; width: 62px; color: var(--eml-muted); } \
+		div#emlMenu select { flex: 1 1 auto; min-width: 0; height: 22px; box-sizing: border-box; margin: 0; padding: 0 4px; font-size: 12px; \
+			background-color: var(--eml-ctlBg); color: var(--eml-ctlText); border: 1px solid var(--eml-ctlLine); border-radius: var(--eml-radius); } \
+		div#emlMenu hr { height: 1px; margin: 4px 0; padding: 0; border: 0; background: var(--eml-lineSoft); } \
+		div#emlMenu button.emlMenuRow { border: 0; border-radius: 0; background: none; color: var(--eml-text); cursor: pointer; text-align: left; } \
+		div#emlMenu button.emlMenuRow:hover, div#emlMenu button.emlMenuRow:focus-visible { background: var(--eml-menuHover, var(--eml-rowHover)); \
+			color: var(--eml-menuHoverText, var(--eml-text)); outline: none; } \
+		div#emlMenu .emlMenuIcon { display: flex; justify-content: center; flex: none; width: 14px; color: var(--eml-icon); } \
+		div#emlMenu .emlMenuIcon svg { display: block; width: 12px; height: 12px; } \
+		div#emlMenu [data-menu=minimize] .emlMenuIcon { color: var(--eml-minColor, var(--eml-accent)); } \
+		div#emlMenu [data-menu=close] .emlMenuIcon { color: var(--eml-closeColor, var(--eml-danger)); } \
+		div#emlMenu .emlMenuText { flex: 1 1 auto; } \
+		div#emlMenu .emlMenuKey { color: var(--eml-muted); font-size: 11px; } \
+		div#emlMenu button.emlMenuRow:hover .emlMenuKey, div#emlMenu button.emlMenuRow:hover .emlMenuIcon { color: var(--eml-menuHoverText, var(--eml-muted)); } \
+		div#emlMenu button.emlMenuRow:hover .emlMenuIcon { color: var(--eml-menuHoverText, var(--eml-icon)); } \
+		div#emlMenu button[data-menu=minimize]:hover .emlMenuIcon { color: var(--eml-menuHoverText, var(--eml-minColor, var(--eml-accent))); } \
+		div#emlMenu button[data-menu=close]:hover .emlMenuIcon { color: var(--eml-menuHoverText, var(--eml-closeColor, var(--eml-danger))); } \
+		div#emlMenu .emlMenuHead { margin: 0; padding: 2px 10px 0; font-size: 11px; color: var(--eml-muted); white-space: nowrap; } \
+';
+
+// The icons of the screens, drawn: centered in their buttons whatever the fonts of the system (SF-2.7). The
+// sets, chosen by the theme (SF-13): solid, outline (thinner lines, open shapes), and sets that list only the
+// icons they change, the others being those of outline; icon() gives them.
 var ICON_SVG = '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" focusable="false">';
+var ICON_GEAR = 'M10.00,5.11 L11.55,5.27 L11.55,6.73 L10.00,6.89 L9.46,8.20 L10.44,9.41 L9.41,10.44 L8.20,9.46 L6.89,10.00 L6.73,11.55'
+	+ ' L5.27,11.55 L5.11,10.00 L3.80,9.46 L2.59,10.44 L1.56,9.41 L2.54,8.20 L2.00,6.89 L0.45,6.73 L0.45,5.27 L2.00,5.11 L2.54,3.80'
+	+ ' L1.56,2.59 L2.59,1.56 L3.80,2.54 L5.11,2.00 L5.27,0.45 L6.73,0.45 L6.89,2.00 L8.20,2.54 L9.41,1.56 L10.44,2.59 L9.46,3.80 Z'
+	+ ' M7.90,6.0 A1.9,1.9 0 1,0 4.10,6.0 A1.9,1.9 0 1,0 7.90,6.0 Z';
+// a colored dot of macOS: the button gives its color, the theme the one of the symbol drawn on it (glyph, THEME_CSS)
+var ICON_DOT = '<circle cx="6" cy="6" r="5.6" fill="currentColor"/><circle class="eml-glyph" cx="6" cy="6" r="5.4" fill="none" stroke-width="0.5" stroke-opacity="0.25"/>';
 var ICONS = {
-	settings: ICON_SVG + '<path fill="currentColor" fill-rule="evenodd" d="M10.00,5.11 L11.55,5.27 L11.55,6.73 L10.00,6.89 L9.46,8.20 L10.44,9.41 L9.41,10.44 L8.20,9.46 L6.89,10.00 L6.73,11.55 L5.27,11.55 L5.11,10.00 L3.80,9.46 L2.59,10.44 L1.56,9.41 L2.54,8.20 L2.00,6.89 L0.45,6.73 L0.45,5.27 L2.00,5.11 L2.54,3.80 L1.56,2.59 L2.59,1.56 L3.80,2.54 L5.11,2.00 L5.27,0.45 L6.73,0.45 L6.89,2.00 L8.20,2.54 L9.41,1.56 L10.44,2.59 L9.46,3.80 Z M7.90,6.0 A1.9,1.9 0 1,0 4.10,6.0 A1.9,1.9 0 1,0 7.90,6.0 Z"/></svg>',
-	minimize: ICON_SVG + '<path fill="currentColor" d="M1,9.5 L11,9.5 L6,2.5 Z"/></svg>',
-	maximize: ICON_SVG + '<path fill="currentColor" d="M1,2.5 L11,2.5 L6,9.5 Z"/></svg>',
-	help: ICON_SVG + '<path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" d="M3.8,4.2 A2.3,2.2 0 1,1 7.2,6.1 C6.4,6.6 6,7 6,7.9"/><circle cx="6" cy="10.4" r="1.05" fill="currentColor"/></svg>',
-	ok: ICON_SVG + '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M2,6.5 L5,9.2 L10,3"/></svg>',
-	warn: ICON_SVG + '<circle cx="6" cy="6" r="5.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M6,3 L6,6.6 M6,8.6 L6,8.7"/></svg>',
-	close: ICON_SVG + '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M2.5,2.5 L9.5,9.5 M9.5,2.5 L2.5,9.5"/></svg>'
+	solid: {
+		settings: ICON_SVG + '<path fill="currentColor" fill-rule="evenodd" d="' + ICON_GEAR + '"/></svg>',
+		minimize: ICON_SVG + '<path fill="currentColor" d="M1,9.5 L11,9.5 L6,2.5 Z"/></svg>',
+		maximize: ICON_SVG + '<path fill="currentColor" d="M1,2.5 L11,2.5 L6,9.5 Z"/></svg>',
+		help: ICON_SVG + '<path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" d="M3.8,4.2 A2.3,2.2 0 1,1 7.2,6.1 C6.4,6.6 6,7 6,7.9"/><circle cx="6" cy="10.4" r="1.05" fill="currentColor"/></svg>',
+		ok: ICON_SVG + '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M2,6.5 L5,9.2 L10,3"/></svg>',
+		warn: ICON_SVG + '<circle cx="6" cy="6" r="5.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M6,3 L6,6.6 M6,8.6 L6,8.7"/></svg>',
+		close: ICON_SVG + '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M2.5,2.5 L9.5,9.5 M9.5,2.5 L2.5,9.5"/></svg>',
+		menu: ICON_SVG + '<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M1.5,2.5 L10.5,2.5 M1.5,6 L10.5,6 M1.5,9.5 L10.5,9.5"/></svg>'
+	},
+	outline: {
+		settings: ICON_SVG + '<path fill="none" stroke="currentColor" stroke-width="1" stroke-linejoin="round" transform="translate(6 6) scale(0.9) translate(-6 -6)" d="' + ICON_GEAR + '"/></svg>',
+		minimize: ICON_SVG + '<path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" d="M1.5,9 L10.5,9 L6,3 Z"/></svg>',
+		maximize: ICON_SVG + '<path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" d="M1.5,3 L10.5,3 L6,9 Z"/></svg>',
+		help: ICON_SVG + '<circle cx="6" cy="6" r="5.3" fill="none" stroke="currentColor" stroke-width="1"/><path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" d="M4.4,4.6 A1.7,1.6 0 1,1 6.9,6.1 C6.3,6.5 6,6.8 6,7.4"/><circle cx="6" cy="9.1" r="0.75" fill="currentColor"/></svg>',
+		ok: ICON_SVG + '<path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M2,6.5 L5,9.2 L10,3"/></svg>',
+		warn: ICON_SVG + '<circle cx="6" cy="6" r="5.3" fill="none" stroke="currentColor" stroke-width="1"/><path stroke="currentColor" stroke-width="1.3" stroke-linecap="round" d="M6,3.2 L6,6.6 M6,8.6 L6,8.7"/></svg>',
+		close: ICON_SVG + '<path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" d="M2.5,2.5 L9.5,9.5 M9.5,2.5 L2.5,9.5"/></svg>',
+		menu: ICON_SVG + '<path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" d="M1.5,2.5 L10.5,2.5 M1.5,6 L10.5,6 M1.5,9.5 L10.5,9.5"/></svg>'
+	},
+	macos: {	// its gear and question mark; its traffic lights: yellow, green, red (the colors given by the theme)
+		settings: ICON_SVG + '<path fill="none" stroke="currentColor" stroke-width="0.9" stroke-linejoin="round" transform="translate(6 6) scale(0.95) translate(-6 -6)" d="' + ICON_GEAR + '"/></svg>',
+		help: ICON_SVG + '<circle cx="6" cy="6" r="5.3" fill="none" stroke="currentColor" stroke-width="0.9"/><path fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" d="M4.5,4.7 A1.6,1.5 0 1,1 6.8,6.1 C6.2,6.5 6,6.8 6,7.3"/><circle cx="6" cy="9" r="0.7" fill="currentColor"/></svg>',
+		minimize: ICON_SVG + ICON_DOT + '<path class="eml-glyph" fill="none" stroke-width="1.2" stroke-linecap="round" d="M3.4,6 L8.6,6"/></svg>',
+		maximize: ICON_SVG + ICON_DOT + '<path class="eml-glyphFill" d="M3.5,3.5 L7.3,3.5 L3.5,7.3 Z M8.5,8.5 L4.7,8.5 L8.5,4.7 Z"/></svg>',
+		close: ICON_SVG + ICON_DOT + '<path class="eml-glyph" fill="none" stroke-width="1.2" stroke-linecap="round" d="M4,4 L8,8 M8,4 L4,8"/></svg>',
+		menu: ICON_SVG + '<circle cx="2.4" cy="6" r="1.1" fill="currentColor"/><circle cx="6" cy="6" r="1.1" fill="currentColor"/><circle cx="9.6" cy="6" r="1.1" fill="currentColor"/></svg>'
+	},
+	firefox: {	// its thin gear; the window controls of Windows: minimize, restore, close
+		settings: ICON_SVG + '<path fill="none" stroke="currentColor" stroke-width="0.9" stroke-linejoin="round" transform="translate(6 6) scale(0.92) translate(-6 -6)" d="' + ICON_GEAR + '"/></svg>',
+		help: ICON_SVG + '<circle cx="6" cy="6" r="5.2" fill="none" stroke="currentColor" stroke-width="0.9"/><path fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" d="M4.5,4.6 A1.6,1.5 0 1,1 6.8,6 C6.2,6.4 6,6.7 6,7.3"/><circle cx="6" cy="8.9" r="0.65" fill="currentColor"/></svg>',
+		minimize: ICON_SVG + '<path fill="none" stroke="currentColor" stroke-width="1" d="M1.5,6.5 L10.5,6.5"/></svg>',
+		maximize: ICON_SVG + '<rect x="2" y="2" width="8" height="8" rx="0.8" fill="none" stroke="currentColor" stroke-width="1"/></svg>',
+		close: ICON_SVG + '<path fill="none" stroke="currentColor" stroke-width="1" d="M2,2 L10,10 M10,2 L2,10"/></svg>',
+		menu: ICON_SVG + '<path fill="none" stroke="currentColor" stroke-width="1" d="M1.5,3 L10.5,3 M1.5,6 L10.5,6 M1.5,9 L10.5,9"/></svg>'
+	},
+	glass: {	// rounded thin strokes: three sliders for the settings, chevrons to fold and unfold the popup
+		settings: ICON_SVG + '<path fill="none" stroke="currentColor" stroke-width="0.9" stroke-linecap="round" d="M1,1.8 L11,1.8 M1,6 L11,6 M1,10.2 L11,10.2"/><circle cx="3.6" cy="1.8" r="1.6" fill="currentColor"/><circle cx="8.4" cy="6" r="1.6" fill="currentColor"/><circle cx="5.2" cy="10.2" r="1.6" fill="currentColor"/></svg>',
+		help: ICON_SVG + '<path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" d="M4,4.2 A2.1,2 0 1,1 7,6 C6.3,6.5 6,6.9 6,7.6"/><circle cx="6" cy="9.9" r="0.8" fill="currentColor"/></svg>',
+		minimize: ICON_SVG + '<path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M2.8,7.6 L6,4.4 L9.2,7.6"/></svg>',
+		maximize: ICON_SVG + '<path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M2.8,4.4 L6,7.6 L9.2,4.4"/></svg>',
+		close: ICON_SVG + '<path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" d="M3,3 L9,9 M9,3 L3,9"/></svg>',
+		menu: ICON_SVG + '<path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" d="M2,3 L10,3 M2,6 L10,6 M2,9 L10,9"/></svg>'
+	},
+	mono: {	// the question mark without its circle, as the other icons have no frame
+		help: ICON_SVG + '<path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" d="M3.8,4.2 A2.3,2.2 0 1,1 7.2,6.1 C6.4,6.6 6,7 6,7.9"/><circle cx="6" cy="10.4" r="0.85" fill="currentColor"/></svg>'
+	}
 };
+
+// The rules shared by every box of the script, written with the variables of the theme by applyTheme(): the page
+// blurred behind the boxes (blur), the symbols drawn on the colored dots of the icons macos (glyph)
+var THEME_CSS = ' div#theDiv, div#emlMsg, div#emlHelp, div#emlStatus, div#emlMenu, #GM_config { backdrop-filter: var(--eml-blur, none); }'
+	+ ' svg[data-eml-icon] .eml-glyph { stroke: var(--eml-glyph, currentColor); }'
+	+ ' svg[data-eml-icon] .eml-glyphFill { fill: var(--eml-glyph, currentColor); }';
 
 
 // Settings dialog, see settingsDialogOpened()
@@ -338,11 +756,13 @@ var ICONS = {
 // and height set inline by GM_config are overridden.
 // The dialog is anchored at the top of the window, centered in width, and never higher than the
 // window: it scrolls inside, so that its bottom (Save) is always reachable, even in a low window.
-// Its width follows the screen: half of the window, between 640 and 960 px (95 % at most, set by GM_config).
-var SETTINGS_CSS = "#GM_config { width: clamp(640px, 50vw, 960px) !important; height: auto !important; max-height: calc(100% - 20px) !important;"
+// Its width follows the screen: half of the window, between 640 and 960 px, never wider than the window (a phone).
+var SETTINGS_CSS = "#GM_config { width: clamp(min(640px, calc(100vw - 20px)), 50vw, 960px) !important; height: auto !important; max-height: calc(100% - 20px) !important;"
 	+ " top: 10px !important; left: 0 !important; right: 0 !important; margin: 0 auto !important; overflow-y: auto !important;"
-	+ " border: 2px solid #2b5c8a !important; box-shadow: 0 6px 24px rgba(0,0,0,.35); border-radius: 4px; }"
-	+ "\n#GM_config * { font-family: Arial, Tahoma, sans-serif; }"
+	+ " border: 2px solid var(--eml-frame) !important; box-shadow: 0 6px 24px var(--eml-backdrop); border-radius: var(--eml-frameRadius, 4px);"
+	+ " background: var(--eml-bg); color: var(--eml-text); accent-color: var(--eml-accentColor); }"
+	+ "\n#GM_config_backdrop { background: var(--eml-backdrop); }"	// the page dimmed behind the dialog
+	+ "\n#GM_config * { font-family: var(--eml-font); }"
 	// the dialog is built inside the page (GM_config): the text styles of the page must not reach it. A page
 	// that centers its text would otherwise center the helps and the servers. The buttons keep their text
 	// centered, and the rules of the dialog that align something on purpose (labels) are more specific.
@@ -350,29 +770,56 @@ var SETTINGS_CSS = "#GM_config { width: clamp(640px, 50vw, 960px) !important; he
 	+ "\n#GM_config, #GM_config * { line-height: normal; letter-spacing: normal; word-spacing: normal;"
 	+ " text-transform: none; text-indent: 0; font-style: normal; }"
 	+ "\n#GM_config_wrapper { padding: 0 0 6px; }"
-	+ "\n#GM_config .config_header { font-size: 15px; font-weight: bold; padding: 10px 14px; text-align: left; background: #e8f1fb;"	// as the toolbars of the popup
-	+ " border-bottom: 1px solid #ccd; display: flex; align-items: center; gap: 6px; }"
+	+ "\n#GM_config .config_header { font-size: 15px; font-weight: bold; padding: 10px 14px; text-align: left; background: var(--eml-bar);"	// as the toolbars of the popup
+	+ " border-bottom: 1px solid var(--eml-lineMid); display: flex; align-items: center; gap: 6px; }"
 	// at the right of the title: the [?] of the inline help, pressed while the helps are shown, and the Close icon,
 	// drawn and sized as the icons of the popup (see addHelpButton())
-	+ "\n#GM_config .config_header button { width: 22px; height: 22px; margin: 0; padding: 0; box-sizing: border-box;"
-	+ " display: inline-flex; align-items: center; justify-content: center; color: #333333; }"
-	+ "\n#GM_config .config_header button svg { display: block; }"
+	// the buttons in the colors of the theme, as those of the toolbars of the popup; those of the title as its icons
+	+ "\n#GM_config button { background-color: var(--eml-ctlBg); color: var(--eml-ctlText); border: 1px solid var(--eml-ctlLine); border-radius: var(--eml-radius); }"
+	+ "\n#GM_config button:hover:enabled { background-color: var(--eml-ctlHover); border-color: var(--eml-ctlHoverLine, var(--eml-ctlLine)); }"
+	+ "\n#GM_config button:active:enabled { background-color: var(--eml-ctlActive, var(--eml-ctlHover));"
+	+ " border-color: var(--eml-ctlActiveLine, var(--eml-ctlHoverLine, var(--eml-ctlLine))); }"
+	+ "\n#GM_config button:disabled { background-color: var(--eml-ctlOffBg); color: var(--eml-ctlOffText); border-color: var(--eml-ctlOffLine); }"
+	+ "\n#GM_config .config_header button { width: var(--eml-iconBtnSize, 22px); height: var(--eml-iconBtnSize, 22px); margin: 0; padding: 0; box-sizing: border-box;"
+	+ " display: inline-flex; align-items: center; justify-content: center; color: var(--eml-icon);"
+	+ " background-color: var(--eml-iconBtnBg, var(--eml-ctlBg)); border-color: var(--eml-iconBtnLine, var(--eml-ctlLine)); border-radius: var(--eml-iconBtnRadius, var(--eml-radius)); }"
+	+ "\n#GM_config .config_header button:hover { background-color: var(--eml-iconBtnHover, var(--eml-ctlHover));"
+	+ " border-color: var(--eml-ctlHoverLine, var(--eml-iconBtnLine, var(--eml-ctlLine))); }"
+	+ "\n#GM_config .config_header button:active { background-color: var(--eml-iconBtnActive, var(--eml-iconBtnHover, var(--eml-ctlHover)));"
+	+ " border-color: var(--eml-ctlActiveLine, var(--eml-ctlHoverLine, var(--eml-iconBtnLine, var(--eml-ctlLine)))); }"
+	+ "\n#GM_config .config_header button svg { display: block; width: var(--eml-iconSize, 12px); height: var(--eml-iconSize, 12px); }"
 	+ "\n#GM_config .helpbtn { margin-left: auto !important; }"
-	+ "\n#GM_config .helpbtn[aria-pressed=\"true\"] { background: #d6e6f7; border: 1px solid #0075ff; border-radius: 2px; color: #0075ff; }"
-	+ "\n#GM_config #GM_config_closeIcon { color: #d00000; }"
+	+ "\n#GM_config .config_header .helpbtn[aria-pressed=\"true\"] { background: var(--eml-rowHover); border: 1px solid var(--eml-iconBtnLine, var(--eml-accent));"
+	+ " border-radius: var(--eml-iconBtnRadius, 2px); color: var(--eml-accent); }"
+	+ "\n#GM_config .config_header #GM_config_closeIcon { color: var(--eml-closeColor, var(--eml-danger)); }"
+	+ "\n#GM_config .config_header #GM_config_closeIcon:hover { background-color: var(--eml-closeHoverBg, var(--eml-iconBtnHover, var(--eml-ctlHover)));"
+	+ " color: var(--eml-closeHoverColor, var(--eml-closeColor, var(--eml-danger))); }"
+	+ "\n#GM_config .config_header #GM_config_closeIcon:active {"
+	+ " background-color: var(--eml-closeActiveBg, var(--eml-closeHoverBg, var(--eml-iconBtnActive, var(--eml-iconBtnHover, var(--eml-ctlHover))))); }"
 	+ "\n#GM_config .section_header_holder { margin: 10px 14px 0; }"
-	+ "\n#GM_config .section_header { background: #e4eef7; color: #2b5c8a; border: none; border-left: 4px solid #2b5c8a;"
+	+ "\n#GM_config .section_header { display: flex; align-items: center; cursor: pointer; user-select: none; }"
+	+ "\n#GM_config .section_header::after { content: '\\25be'; margin-left: auto; padding: 0 2px; font-size: 16px; line-height: 16px; }"
+	+ "\n#GM_config .section_header_holder.emlFolded > .section_header::after { content: '\\25b8'; }"
+	+ "\n#GM_config .section_header:focus-visible { outline: 2px solid var(--eml-linkHover); outline-offset: 0; }"
+	+ "\n#GM_config .section_header_holder.emlFolded > :not(.section_header) { display: none !important; }"
+	+ "\n#GM_config .emlToolbars.emlShortcuts td { white-space: nowrap; }"
+	+ "\n#GM_config .emlToolbars.emlShortcuts select { width: auto; }"	// as wide as None, its widest choice, in every language
+	+ "\n#GM_config .emlShortcuts .emlKeyMod { color: var(--eml-muted); margin-right: 4px; }"
+	+ "\n#GM_config #GM_config_field_textSize { width: 160px; margin: 0; padding: 0; justify-self: start; }"
+	+ "\n#GM_config .emlSizeValue { color: var(--eml-text); font-size: 12px; }"
+	+ "\n#GM_config .section_header { background: var(--eml-section); color: var(--eml-title); border: none; border-left: 4px solid var(--eml-title);"
 	+ " font-size: 13px; font-weight: bold; padding: 4px 8px; text-align: left; }"
-	+ "\n#GM_config .section_desc { background: none; border: none; color: #555; text-align: left;"
+	+ "\n#GM_config .section_desc { background: none; border: none; color: var(--eml-muted); text-align: left; font-size: 12px;"
 	+ " margin: 3px 0 4px 12px; }"
 	+ "\n#GM_config .config_var { display: grid; grid-template-columns: 170px auto 1fr; align-items: center;"
 	+ " column-gap: 8px; margin: 0; padding: 4px 6px; }"
-	+ "\n#GM_config .config_var:hover, #GM_config .config_var:focus-within { background: #f3f8fd; }"
+	+ "\n#GM_config .config_var:hover, #GM_config .config_var:focus-within { background: var(--eml-bg2); }"
 	+ "\n#GM_config .field_label { font-size: 12px; font-weight: bold; text-align: right; margin: 0; }"
 	+ "\n#GM_config .config_var span { font-size: 12px; }"
 	+ "\n#GM_config input[type=text], #GM_config input[type=password], #GM_config select { font-size: 12px;"
-	+ " padding: 3px 5px; border: 1px solid #99a; border-radius: 3px; }"
-	+ "\n#GM_config input:focus, #GM_config select:focus { outline: 2px solid #00f; outline-offset: 0; }"
+	+ " padding: 3px 5px; border: 1px solid var(--eml-ctlLine); border-radius: 3px;"
+	+ " background-color: var(--eml-editBg, Field); color: var(--eml-editText, FieldText); }"
+	+ "\n#GM_config input:focus, #GM_config select:focus { outline: 2px solid var(--eml-linkHover); outline-offset: 0; }"
 	// the long values (address, categories, filter) take the whole width of the column, as their help
 	+ "\n#GM_config #GM_config_field_emuleUrl, #GM_config #GM_config_field_emuleCat, #GM_config #GM_config_field_checkFilter {"
 	+ " grid-column: 2 / -1; width: 100%; box-sizing: border-box; }"
@@ -381,57 +828,66 @@ var SETTINGS_CSS = "#GM_config { width: clamp(640px, 50vw, 960px) !important; he
 	+ "\n#GM_config .pwdbox { grid-column: 2 / -1; display: flex; column-gap: 8px; }"	// password and its Show button
 	+ "\n#GM_config .pwdbox input { flex: 1; min-width: 0; }"
 	+ "\n#GM_config .reveal { justify-self: start; font-size: 11px; padding: 2px 8px; }"
-	+ "\n#GM_config .help { display: none; grid-column: 2 / -1; font-size: 11px; color: #123; white-space: pre-line;"
-	+ " background: #e4eef7; border-left: 3px solid #2b5c8a; padding: 5px 8px; margin: 4px 0 2px; }"
+	+ "\n#GM_config .help { display: none; grid-column: 2 / -1; font-size: 11px; color: var(--eml-helpText); white-space: pre-line;"
+	+ " background: var(--eml-section); border-left: 3px solid var(--eml-title); padding: 5px 8px; margin: 4px 0 2px; }"
 	+ "\n#GM_config.helps .help { display: block; }"		// all the helps shown by the Help button
-	+ "\n#GM_config .error { grid-column: 2 / -1; font-size: 11px; font-weight: bold; color: #c00; margin: 3px 0 0; }"
-	+ "\n#GM_config input.invalid { border-color: #c00; outline: 1px solid #c00; }"
-	+ "\n#GM_config_buttons_holder { margin: 8px 14px 0; border-top: 1px solid #ccd; padding-top: 6px;"
+	+ "\n#GM_config .help a { color: var(--eml-accent); text-decoration: underline; }"
+	+ "\n#GM_config .error { grid-column: 2 / -1; font-size: 11px; font-weight: bold; color: var(--eml-koText); margin: 3px 0 0; }"
+	+ "\n#GM_config input.invalid { border-color: var(--eml-koText); outline: 1px solid var(--eml-koText); }"
+	+ "\n#GM_config_buttons_holder { margin: 8px 14px 0; border-top: 1px solid var(--eml-lineMid); padding-top: 6px; color: var(--eml-text);"
 	+ " display: flex; flex-wrap: wrap; align-items: center; }"
-	+ "\n#GM_config .saveclose_buttons { margin: 4px 0 4px 8px; padding: 4px 16px; }"
+	+ "\n#GM_config .saveclose_buttons { margin: 4px 0 4px 8px; padding: 4px 16px; font-size: 13.33px; }"
+	+ "\n#GM_config input[type=checkbox], #GM_config input[type=radio] { width: 13px; height: 13px; }"	// their size in the browser, following the size chosen
 	// Save stands out, as Download and OK in the popup
-	+ "\n#GM_config #GM_config_saveBtn { border: 2px solid #0075ff; border-radius: 3px; background: #ffffff; color: #000000; padding: 3px 15px; }"
-	+ "\n#GM_config #GM_config_saveBtn:hover { background: #f3f8fd; }"
+	+ "\n#GM_config #GM_config_saveBtn { border: var(--eml-primaryBorder, 2px) solid var(--eml-primaryLine, var(--eml-accent)); border-radius: var(--eml-radius);"
+	+ " background: var(--eml-primaryBg); color: var(--eml-primaryText); padding: 3px 15px; }"
+	+ "\n#GM_config #GM_config_saveBtn:hover { background: var(--eml-primaryHover); color: var(--eml-primaryHoverText, var(--eml-primaryText));"
+	+ " border-color: var(--eml-ctlHoverLine, var(--eml-primaryLine, var(--eml-accent))); }"
+	+ "\n#GM_config #GM_config_saveBtn:active { background: var(--eml-primaryActive, var(--eml-primaryHover)); box-shadow: var(--eml-primaryActiveRing, none);"
+	+ " border-color: var(--eml-ctlActiveLine, var(--eml-ctlHoverLine, var(--eml-primaryLine, var(--eml-accent)))); }"
 	+ "\n#GM_config .reset_holder { display: none; }"		// replaced by the Reset button, see addResetButton()
 	// the links to the repository, at the bottom (see addFooter())
-	+ "\n#GM_config .footer { margin: 4px 14px 0; padding: 6px 0 2px; border-top: 1px solid #e3e8ef; font-size: 11px;"
+	+ "\n#GM_config .footer { margin: 4px 14px 0; padding: 6px 0 2px; border-top: 1px solid var(--eml-lineSoft); font-size: 11px;"
 	+ " display: flex; justify-content: space-between; }"
-	+ "\n#GM_config .footer a { color: #2b5c8a; text-decoration: none; }"
+	+ "\n#GM_config .footer a { color: var(--eml-title); text-decoration: none; }"
 	+ "\n#GM_config .footer a:hover { text-decoration: underline; }"
 	+ "\n#GM_config .resetbtn { margin-right: auto; font-size: 12px; padding: 4px 12px; }"
-	+ "\n#GM_config .notice { flex-basis: 100%; order: 3; font-size: 11px; color: #123; text-align: left;"
-	+ " background: #fff8e1; border-left: 3px solid #f0a000; padding: 5px 8px; margin: 6px 0 0;"
+	+ "\n#GM_config .notice { flex-basis: 100%; order: 3; font-size: 11px; color: var(--eml-helpText); text-align: left;"
+	+ " background: var(--eml-doubtBg); border-left: 3px solid var(--eml-warn); padding: 5px 8px; margin: 6px 0 0;"
 	+ " display: flex; align-items: center; column-gap: 8px; }"
 	// its Undo button: the style of Show, always on the right of the notice whatever the length of its text
 	+ "\n#GM_config .notice button { font-size: 11px; margin: 0 0 0 auto; padding: 2px 8px; white-space: nowrap; }"
-	+ "\n#GM_config .config_var.changed { background: #fff8e1; }"
-	+ "\n#GM_config .config_var.changed .field_label::after { content: ' \\2022'; color: #f0a000; }"
+	+ "\n#GM_config .config_var.changed { background: var(--eml-doubtBg); }"
+	+ "\n#GM_config .config_var.changed .field_label::after { content: ' \\2022'; color: var(--eml-warn); }"
 	// the servers as a list (see setupServers()): the select of GM_config stays hidden
 	+ "\n#GM_config #GM_config_ed2kDlMethod_var { grid-template-columns: 1fr; }"
 	+ "\n#GM_config #GM_config_ed2kDlMethod_var > label, #GM_config #GM_config_ed2kDlMethod_var > select { display: none; }"
 	+ "\n#GM_config #GM_config_ed2kDlMethod_var > .help, #GM_config #GM_config_ed2kDlMethod_var > .error { grid-column: 1 / -1; }"
-	+ "\n#GM_config .slist { border: 1px solid #b8c6d6; border-radius: 4px; }"
+	+ "\n#GM_config .slist { border: 1px solid var(--eml-lineMid); border-radius: 4px; }"
 	+ "\n#GM_config .srow { display: grid; grid-template-columns: 26px 150px 150px 1fr auto; align-items: center;"
-	+ " column-gap: 6px; padding: 5px 8px; border-top: 1px solid #e3e8ef; font-size: 12px; }"
+	+ " column-gap: 6px; padding: 5px 8px; border-top: 1px solid var(--eml-lineSoft); font-size: 12px; }"
 	+ "\n#GM_config .srow:first-child { border-top: none; }"
-	+ "\n#GM_config .srow.sel { background: #e4eef7; }"
+	+ "\n#GM_config .srow.sel { background: var(--eml-section); }"
 	+ "\n#GM_config .srow label { font-weight: bold; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }"
-	+ "\n#GM_config .srow .method { color: #2b5c8a; font-size: 11px; background: #eef3f9; border: 1px solid #c9d6e6;"
+	+ "\n#GM_config .srow .method { color: var(--eml-title); font-size: 11px; background: var(--eml-bar); border: 1px solid var(--eml-lineMid);"
 	+ " border-radius: 10px; padding: 1px 7px; justify-self: start; white-space: nowrap;"
 	+ " max-width: 100%; box-sizing: border-box; overflow: hidden; text-overflow: ellipsis; }"	// a long name cut by "..."
 	// a deleted server, in its place; its Undo on the right edge of the fields and their buttons (Show)
-	+ "\n#GM_config .slist .notice { margin: 0; border-top: 1px solid #e3e8ef; padding-right: 6px; }"
-	+ "\n#GM_config .srow .sum { color: #555; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }"
-	+ "\n#GM_config .srow .sum.none { color: #999; font-style: italic; }"
-	+ "\n#GM_config .srow .acts button { background: none; border: none; color: #2b5c8a; font-size: 11px;"
+	+ "\n#GM_config .slist .notice { margin: 0; border-top: 1px solid var(--eml-lineSoft); padding-right: 6px; }"
+	+ "\n#GM_config .srow .sum { color: var(--eml-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }"
+	+ "\n#GM_config .srow .sum.none { color: var(--eml-faded); font-style: italic; }"
+	+ "\n#GM_config .srow .acts button { background: none; border: none; color: var(--eml-title); font-size: 11px;"
 	+ " text-decoration: underline; cursor: pointer; padding: 0 2px; margin-left: 6px; }"
-	+ "\n#GM_config .srow .acts button.del { color: #a33; }"
-	+ "\n#GM_config .srow .acts button:disabled { color: #999999; text-decoration: none; cursor: default; }"
-	// Local disabled (I-14): its row grayed out, but its Enable link
+	+ "\n#GM_config .srow .acts button.del { color: var(--eml-danger); }"
+	+ "\n#GM_config .srow .acts button:disabled { color: var(--eml-faded); text-decoration: none; cursor: default; }"
+	// Local disabled (SF-8.20): its row grayed out, but its Enable link
 	+ "\n#GM_config .srow.off > :not(.acts) { opacity: 0.45; }"
 	+ "\n#GM_config .srow.off label { cursor: default; }"
-	+ "\n#GM_config .sfields { background: #f7f9fc; border-top: 1px solid #e3e8ef; padding: 4px 0 6px; }"
-	+ "\n#GM_config .sadd { border-top: 1px solid #e3e8ef; padding: 6px 8px; }"
+	+ "\n#GM_config .sfields { background: var(--eml-bg2); border-top: 1px solid var(--eml-lineSoft); padding: 4px 0 6px; }"
+	// the fields of the server edited aligned on those of the other sections: inside the list, they are further right by
+	// the padding of its row (6 px) and its border (1 px)
+	+ "\n#GM_config .sfields .config_var { grid-template-columns: calc(170px - 6px - 1px) auto 1fr; }"
+	+ "\n#GM_config .sadd { border-top: 1px solid var(--eml-lineSoft); padding: 6px 8px; }"
 	+ "\n#GM_config .sadd button { font-size: 12px; padding: 3px 10px; }"
 	+ "\n#GM_config #GM_config_field_serverName { grid-column: 2 / -1; width: 100%; box-sizing: border-box; }"
 	// Test and Import (emule, amule, amuleapi), see addApiButtons(): the style of Show. Import and the Undo of an
@@ -447,14 +903,59 @@ var SETTINGS_CSS = "#GM_config { width: clamp(640px, 50vw, 960px) !important; he
 	+ "\n#GM_config .apistatus { grid-column: 2 / -1; font-size: 11px; margin: 4px 0 0; padding: 3px 8px; border-radius: 3px; }"
 	+ "\n#GM_config .catbox .apistatus { grid-column: 1; margin: 0; align-self: stretch; }"
 	+ "\n#GM_config .catbox .apistatus.wide { grid-column: 1 / -1; }"
-	+ "\n#GM_config .apistatus.ok { color: #1d6b2a; background: #e8f5ea; border-left: 3px solid #2e8b3d; }"
-	+ "\n#GM_config .apistatus.warn { color: #7a4b00; background: #fff4e0; border-left: 3px solid #f0a000; }"
-	+ "\n#GM_config .apistatus.ko { color: #a00; background: #fdecec; border-left: 3px solid #c00; }";
+	+ "\n#GM_config .apistatus.ok { color: var(--eml-okText); background: var(--eml-okBg); border-left: 3px solid var(--eml-okText); }"
+	+ "\n#GM_config .apistatus.warn { color: var(--eml-doubtText); background: var(--eml-doubtBg); border-left: 3px solid var(--eml-warn); }"
+	+ "\n#GM_config .apistatus.ko { color: var(--eml-koText); background: var(--eml-koBg); border-left: 3px solid var(--eml-koText); }"
+	// the table of the toolbars (setupToolbarsTable(), SF-2.14): a row per control, from left to right, a column per toolbar
+	+ "\n#GM_config #GM_config_toolbars_var { align-items: start; }"
+	+ "\n#GM_config #GM_config_toolbars_var > .field_label { margin-top: 4px; }"
+	+ "\n#GM_config .config_var > .emlToolbars { grid-column: 2 / -1; border-collapse: collapse; width: 100%; font-size: 12px;"
+	+ " margin: 0; padding: 0; border: 0; box-shadow: none; background: none; }"	// whatever the page gives its tables
+	+ "\n#GM_config .emlToolbars tr, #GM_config .emlToolbars th, #GM_config .emlToolbars td { background: none; border: 0; box-shadow: none; color: var(--eml-text); }"
+	+ "\n#GM_config .emlToolbars th { text-align: left; font-weight: normal; padding: 3px 12px 3px 0; white-space: nowrap; vertical-align: middle; }"
+	+ "\n#GM_config .emlToolbars th small { display: block; color: var(--eml-muted); font-size: 11px; }"
+	+ "\n#GM_config .emlToolbars td { padding: 3px 12px 3px 0; width: 38%; vertical-align: middle; }"
+	+ "\n#GM_config .emlToolbars td.order { width: auto; color: var(--eml-muted); font-size: 11px; font-style: italic; white-space: nowrap; }"
+	+ "\n#GM_config .emlToolbars td.head { font-weight: bold; color: var(--eml-title); }"
+	+ "\n#GM_config .emlToolbars select { width: 100%; box-sizing: border-box; }"
+	+ "\n#GM_config .emlToolbars .fixed { color: var(--eml-muted); font-style: italic; }"
+	+ "\n#GM_config .emlToolbars .none { color: var(--eml-faded); }"
+	+ "\n#GM_config .emlToolbars td.note { color: var(--eml-warn); font-size: 11px; padding-top: 0; }"
+	+ "\n#GM_config .emlToolbars td.changed { background: var(--eml-doubtBg); }"
+	// narrow: stacked, each control then one line per toolbar
+	+ "\n@container (max-width: 560px) {"
+	+ " #GM_config .config_var > .emlToolbars { grid-column: 1 / -1; }"
+	+ " #GM_config .emlToolbars, #GM_config .emlToolbars tbody, #GM_config .emlToolbars tr, #GM_config .emlToolbars th { display: block; width: 100%; }"
+	+ " #GM_config .emlToolbars tr.top td.head, #GM_config .emlToolbars td.empty { display: none; }"
+	+ " #GM_config .emlToolbars tr[hidden] { display: none; }"
+	+ " #GM_config .emlToolbars th { font-weight: bold; padding: 8px 0 2px; border-top: 1px solid var(--eml-lineSoft); }"
+	+ " #GM_config .emlToolbars td { display: grid; grid-template-columns: 110px 1fr; align-items: center; width: auto; padding: 2px 0 2px 12px; }"
+	+ " #GM_config .emlToolbars td::before { content: attr(data-col); color: var(--eml-muted); font-size: 11px; }"
+	+ " #GM_config .emlToolbars td.order, #GM_config .emlToolbars td.note { display: block; padding: 0 0 2px 12px; }"
+	+ " #GM_config .emlToolbars td.order::before, #GM_config .emlToolbars td.note::before { content: none; }"
+	+ " }"
+	// narrow (a phone, a small window, a large size): each label above its field, the rows of the servers on three lines
+	+ "\n#GM_config { container-type: inline-size; }"
+	+ "\n@container (max-width: 560px) {"
+	+ " #GM_config .config_var, #GM_config .sfields .config_var { grid-template-columns: 1fr; padding: 4px 2px; }"
+	+ " #GM_config .field_label { text-align: left; }"
+	+ " #GM_config .config_var > *, #GM_config .help, #GM_config .error, #GM_config .pwdbox, #GM_config .catbox,"
+	+ " #GM_config #GM_config_field_emuleUrl, #GM_config #GM_config_field_emuleCat, #GM_config #GM_config_field_checkFilter,"
+	+ " #GM_config #GM_config_field_serverName { grid-column: 1 / -1; justify-self: stretch; }"
+	+ " #GM_config select, #GM_config input[type=checkbox] { justify-self: start; }"
+	+ " #GM_config .section_header_holder { margin: 10px 6px 0; }"
+	+ " #GM_config .srow { grid-template-columns: 26px 1fr auto; row-gap: 3px; }"
+	+ " #GM_config .srow > input { grid-column: 1; grid-row: 1; } #GM_config .srow > label { grid-column: 2; grid-row: 1; }"
+	+ " #GM_config .srow .acts { grid-column: 3; grid-row: 1; }"
+	+ " #GM_config .srow .method { grid-column: 2 / -1; grid-row: 2; } #GM_config .srow .sum { grid-column: 2 / -1; grid-row: 3; }"
+	+ " }";
 
 // -------------------------------------------------------------------------
-// The texts: one table per language (I-7), read by tr(); English is the reference, a text missing
-// in another language is taken from it. {name} is replaced by a value; in a label, & marks the letter
-// of its keyboard shortcut, underlined when the label holds it (trLabel())
+// The texts: one table per language (SF-12), read by tr(); English is the reference, a text missing
+// in another language is taken from it. {name} is replaced by a value. A text that names a keyboard shortcut is
+// built by the code from pieces of sentences, one per shortcut that exists (a shortcut can be None): closedKey,
+// helpCloseKey, popupViewKeys…; the tooltips get the shortcut of their action, and the letter of a shortcut is
+// underlined in the label of its button when the label holds it (keyLabel())
 // -------------------------------------------------------------------------
 
 var TEXTS = {
@@ -462,28 +963,27 @@ var TEXTS = {
 		// the menu of the userscript manager
 		menuSettings: 'Emule Linker: Settings',
 		menuHelp: 'Emule Linker: Help',
-		menuDownload: 'Emule Linker: Download',
-		menuCheckAll: 'Emule Linker: Check or uncheck all links',
-		menuMode: 'Emule Linker: Change mode (edit/normal)',
-		menuView: 'Emule Linker: Switch view (maximized/minimized/closed)',
-		menuClose: 'Emule Linker: Close Popup',
 		menuOpen: 'Emule Linker: Open Popup',
 		menuDebug: 'Emule Linker: Toggle debug traces',
 		debugOn: 'Emule Linker: debug traces on (see the browser console)',
 		debugOff: 'Emule Linker: debug traces off',
-		// the popup: its toolbars (& marks the letter of a shortcut, underlined when the label holds it), its list
-		checkAllTitle: 'Check or uncheck every link (Ctrl+Alt+A)',
-		editMode: 'Edit &mode',
-		editModeTitle: 'Edit the links as text (Ctrl+Alt+M)',
-		normalMode: 'Normal &mode',
-		normalModeTitle: 'Back to the list (Ctrl+Alt+M)',
-		download: '&Download',
-		downloadTitle: 'Download the checked links (Ctrl+Alt+D)',
-		settingsTitle: 'Settings (Ctrl+Alt+S)',
-		helpTitle: 'Help (Ctrl+Alt+H)',
-		minimizeTitle: 'Minimize (Ctrl+Alt+X)',
-		maximizeTitle: 'Maximize (Ctrl+Alt+X)',
-		closeTitle: 'Close (Ctrl+Alt+C)',
+		internalError: 'Internal error of Emule Linker ({what}): please report the problem',
+		// the popup: its toolbars (their tooltips get the shortcut of their action), its list
+		checkAllTitle: 'Check or uncheck every link',
+		editMode: 'Edit mode',
+		editModeTitle: 'Edit the links as text',
+		normalMode: 'Normal mode',
+		normalModeTitle: 'Back to the list',
+		download: 'Download',
+		downloadTitle: 'Download the checked links',
+		export: 'Export',
+		exportTitle: 'Export the checked links: copy them, or save them as an eMule collection, a CSV or a text file',
+		exportCopyKey: '{key} copies the links',
+		settingsTitle: 'Settings',
+		helpTitle: 'Help',
+		minimizeTitle: 'Minimize',
+		maximizeTitle: 'Maximize',
+		closeTitle: 'Close',
 		categoryTip: 'Category: {name}\nThe category of the downloads, for this page only',
 		serverTip: 'Server: {name}\nThe server that receives the links, for this page only',
 		local: 'Local',
@@ -492,15 +992,16 @@ var TEXTS = {
 		filteredTitle: 'Not checked by default: its name does not match the filter of the settings',
 		filterFlags: 'The flags g and y are not allowed: each test would depend on the previous one',
 		filterInvalid: 'Not a valid regular expression: {reason}',
-		// the message shown when the popup is closed (I-3)
+		// the message shown when the popup is closed (SF-10.4)
 		closedTitle: 'Emule Linker \u2014 Popup closed',
-		closedText: 'You have closed the popup on this page. To open it again:<ul><li>press <b>Ctrl+Alt+O</b>, or</li><li>press <b>Ctrl+Alt+X</b>, or</li><li>choose <b>Open Popup</b> in the menu of {manager}.</li></ul>To keep the popup closed on every page, choose <b>Closed</b> as the <b>Default popup view</b> in the settings, or restrict this script to some sites (see the {link}installation guide{end}).',
+		closedText: 'You have closed the popup on this page. To open it again:<ul>{keys}<li>choose <b>Open Popup</b> in the menu of {manager}.</li></ul>To keep the popup closed on every page, choose <b>Closed</b> as the <b>Default popup view</b> in the settings, or restrict this script to some sites (see the {link}installation guide{end}).',
+		closedKey: '<li>press <b>{key}</b>, or</li>',
 		dontDisplay: 'Don\'t display again',
 		closeMessageTitle: 'Close this message (Escape)',
 		statusCloseTitle: 'Close this message',
 		ok: 'OK',
 		userscriptManager: 'your userscript manager',
-		// the help (I-5)
+		// the help (SF-11)
 		help: 'Help',
 		helpCloseTitle: 'Close the help (Escape)',
 		helpIntro: 'Emule Linker lists the ed2k links of the page in the popup, and sends the ones you check to your ed2k client.',
@@ -513,17 +1014,19 @@ var TEXTS = {
 		helpCategory: 'The category of the downloads, for this page only',
 		helpDownload: 'Sends the checked links to the server',
 		helpEditMode: 'Shows the links as text, to edit them; Normal mode goes back to the list',
+		helpExport: 'Copies the checked links, or saves them as an eMule collection, a CSV or a text file',
 		helpSettings: 'Opens the settings: your servers, the look of the popup',
 		helpHelp: 'Shows or hides this help',
 		helpView: 'Keeps only the top toolbar / shows the whole popup again',
-		helpClose: 'Closes the popup on this page; Ctrl+Alt+O opens it again',
+		helpClose: 'Closes the popup on this page',
+		helpCloseKey: '; {key} opens it again',
 		helpList: 'The list of the links',
 		helpListClick: 'Click a file name to download this file only (to the chosen server and category).',
 		helpListGray: 'Links in gray are not checked by default: see <b>Links checked by default</b> in the settings.',
 		helpListShadow: 'A shadow on an edge of the list tells that more links are hidden beyond it.',
 		helpNext: 'The popup on the next pages',
 		helpNextView: 'Each page opens the popup in the <b>Default popup view</b> of the settings: Maximized, Minimized or Closed.',
-		helpNextMenu: 'Every command is also in the menu of {manager}, under <b>Emule Linker</b>.',
+		helpNextMenu: 'The settings, this help and Open Popup are also in the menu of {manager}, under <b>Emule Linker</b>.',
 		helpDoc: 'Full documentation on GitHub',
 		helpIssues: 'Report a problem',
 		// the sending, and the answers of the clients ({client}: eMule, aMule, MLDonkey)
@@ -610,11 +1113,10 @@ var TEXTS = {
 		categoryError: 'No valid category: write them as name=value, separated by ; (e.g. *default=0;Video=2)',
 		wholeNumber: 'A whole number is expected',
 		wholeAtLeast1: 'A whole number, at least 1, is expected',
-		heightMin: 'At least 40 px, or 0 for unlimited: a smaller popup would hide its Settings button',
-		widthMin: 'At least 100 px, or 0 for unlimited: a smaller popup would hide its Settings button',
+		widthMin: 'At least {min} characters, or 0 for unlimited: a narrower popup would hide its menu, and the settings',
+		editColMin: 'At least {min} columns: a narrower edit box would hide the menu of the popup, and the settings',
 		alertCategory: 'No valid category: the default value (*default=0) is used instead.',
-		alertHeight: 'A maximum popup height between 1 and 39 px would hide the Settings button: 0 (unlimited) is used instead.',
-		alertWidth: 'A maximum popup width between 1 and 99 px would hide the Settings button: 0 (unlimited) is used instead.',
+		alertWidth: 'A maximum popup width between 1 and {max} characters would hide its menu, and the settings: 0 (unlimited) is used instead.',
 		// the fields of the settings dialog: {id}Label, {id}Help, {id}.{option}
 		section0: 'General',
 		section0Help: 'How the script behaves on every page',
@@ -623,13 +1125,55 @@ var TEXTS = {
 		'language.browser': 'Browser language (default)',
 		'language.en': 'English',
 		'language.fr': 'Français',
+		themeLabel: 'Theme',
+		themeHelp: 'The colors of the popup, of its messages, of its help and of this dialog.\nAutomatic: Default light, or Windows 11 dark when Windows or the browser is in dark mode, following a change of mode at once.\nEvery theme is shown in the [README](#usage).',
+		'theme.auto': 'Automatic (default)',
+		'theme.light': 'Default light',
+		'theme.macos': 'macOS',
+		'theme.firefox': 'Firefox light',
+		'theme.mono': 'Monochrome light',
+		'theme.glass': 'Transparent glass',
+		'theme.legacy': 'Legacy',
+		'theme.win11': 'Windows 11 dark',
+		'theme.chrome': 'Chrome dark',
+		'theme.steel': 'Steel blue night',
+		'theme.oled': 'OLED black',
+		menuTitle: 'Menu: the controls that do not fit in the toolbars of a narrow popup',
+		menuServer: 'Server',
+		menuCategory: 'Category',
+		menuExport: 'Export',
+		'export.copy': 'Copy the links',
+		'export.collection': 'eMule collection (.emulecollection)',
+		'export.csv': 'CSV (.csv)',
+		'export.text': 'Text, one link per line (.txt)',
+		'format.collection': 'eMule collection',
+		'format.csv': 'CSV',
+		'format.text': 'text',
+		exportCopied: '{count} link(s) copied',
+		exportSaved: '{count} link(s) exported ({format})',
+		exportNone: 'No link to export: check some links first',
+		exportCopyFailed: 'The browser refused to copy the links',
+		'menu.settings': 'Settings',
+		'menu.help': 'Help',
+		'menu.minimize': 'Minimize',
+		'menu.maximize': 'Maximize',
+		'menu.close': 'Close',
+		helpMenu: 'In a narrow popup: the controls that do not fit in the toolbars, the buttons at the top right first, then the lists',
+		textSizeLabel: 'Size',
+		textSizeHelp: 'The size of the text, of the buttons and of the spacing of the popup, of its messages, of its help and of this dialog, from {min} % to {max} %: larger for a tablet or a high-resolution screen; 100 %: the size of the earlier versions. Applied once saved.',
+		sizeValue: '{value} %',
+		sizeValueDefault: '{value} % (default)',
 		popupViewLabel: 'Default popup view',
-		popupViewHelp: 'The view of the popup when a page with ed2k links opens. What you change in the popup applies to this page only: the next page opens in this view again.\nMaximized: the list of the links (default).\nMinimized: only the top toolbar, with the number of links.\nClosed: no popup. The popup, and this dialog too, can then be opened only with the keyboard shortcuts (`Ctrl+Alt+O` or `Ctrl+Alt+X`: the popup, `Ctrl+Alt+S`: this dialog) or the menu of Tampermonkey or Violentmonkey (Emule Linker: Open Popup, Emule Linker: Settings).',
+		popupViewHelp: 'The view of the popup when a page with ed2k links opens. What you change in the popup applies to this page only: the next page opens in this view again.\nMaximized: the list of the links (default).\nMinimized: only the top toolbar, with the number of links.\nClosed: no popup. The popup, and this dialog too, can then be opened only {keys}from the menu of Tampermonkey or Violentmonkey (Emule Linker: Open Popup, Emule Linker: Settings).',
+		popupViewKeys: 'with the keyboard shortcuts ({list}) or ',
+		popupViewKeysPopup: '{keys}: the popup',
+		popupViewKeysDialog: '{key}: this dialog',
+		keysOr: ' or ',
 		'popupView.maximized': 'Maximized (default)',
 		'popupView.minimized': 'Minimized',
 		'popupView.closed': 'Closed',
 		closeMessageLabel: 'Show a message when the popup is closed',
-		closeMessageHelp: 'When you close the popup (its ✕ button, `Ctrl+Alt+C` or the menu), a message tells how to open it again.\nIts box "Don\'t display again" unchecks this setting.',
+		closeMessageHelp: 'When you close the popup (its ✕ button or the menu), a message tells how to open it again.\nIts box "Don\'t display again" unchecks this setting.',
 		section1: 'Servers',
 		section1Help: 'Where the ed2k links are sent: the servers you use, and the one that receives the links',
 		ed2kDlMethodLabel: 'Ed2k Download Method',
@@ -650,10 +1194,43 @@ var TEXTS = {
 		emuleCatHelp: 'The categories offered in the popup, as `name=value`, separated by `;`\nA `*` before a name makes it the default one.\neMule and aMule 3.x: the value is the number of the category (`0`: the default category), e.g. `*default=0;Video=2`\neMule and aMule: Import fills the field with their categories, in their order.\naMule 2.x: the value is the name of the category, e.g. `*Audio=audio;Video=Video` (a `;` in a name is written `\\;`)',
 		section2: 'Popup',
 		section2Help: 'How the popup is displayed, and the links it checks',
-		showCategoriesLabel: 'Show the category list',
-		showCategoriesHelp: 'Shows the list of the categories in the toolbars of the popup, to choose the category of the downloads of the page. It is grayed out when the server has fewer than two categories.\nUnchecked: the links are sent to the default category of the server.',
-		showServerListLabel: 'Show the server list',
-		showServerListHelp: 'Shows the list of the servers in the toolbars of the popup, to send the links of the page to another server: Local, then your servers. It is shown when it offers two choices at least, Local included. The server chosen applies to this page only.\nUnchecked: the links are sent to the server checked above.',
+		sectionKeys: 'Keyboard shortcuts',
+		sectionKeysHelp: 'The commands typed with Ctrl+Alt and a letter',
+		'key.checkAll': 'Check or uncheck all links',
+		'key.download': 'Download',
+		'key.copy': 'Copy the links',
+		'key.export': 'Export (its menu)',
+		'key.editMode': 'Edit mode / Normal mode',
+		'key.settings': 'Settings',
+		'key.help': 'Help',
+		'key.view': 'Switch view (maximized, minimized, closed)',
+		'key.close': 'Close the popup',
+		'key.open': 'Open the popup',
+		'key.debug': 'Debug traces (on / off)',
+		keyNone: 'None',
+		keysHelp: 'The letter of each command, typed with Ctrl+Alt; None: no shortcut. A letter can be used once only.\nA letter that types a character with AltGr on your keyboard (E on a French keyboard: €) does not work in Firefox, and the browser takes some combinations (Ctrl+Alt+X in Firefox). Applied once saved.',
+		keyTwice: 'Already the shortcut of {action}',
+		sectionToolbars: 'Toolbars',
+		sectionToolbarsHelp: 'Where each control of the toolbars of the popup is shown',
+		sectionFold: 'Fold this section',
+		sectionUnfold: 'Unfold this section',
+		toolbarsHelp: 'Where each control of the toolbars of the popup is shown, from left to right. In the menu ☰: in the menu button at the right of the top toolbar, which then also holds the buttons at the top right. Not shown: not in this toolbar. A list shown nowhere, nor in the menu, is not used: the server or the category of the settings is. The server list appears when it offers two choices at least, Local included; the category list is grayed out when the server has fewer than two categories. A narrow popup puts more controls in the menu anyway.',
+		toolbarsOrder: 'From left to right, as in the toolbars',
+		toolbarTop: 'Top toolbar',
+		toolbarBottom: 'Bottom toolbar',
+		tbRowBox: 'Check box and counter',
+		tbRowEdit: 'Edit mode',
+		tbRowExport: 'Export',
+		tbRowServer: 'Server list',
+		tbRowCategory: 'Category list',
+		tbRowDownload: 'Download',
+		tbRowButtons: 'Buttons at the top right',
+		tbRowButtonsSub: 'settings, help, minimize, close',
+		'tb.shown': 'Shown',
+		'tb.menu': 'In the menu ☰',
+		'tb.none': 'Not shown',
+		'tb.always': 'Always shown',
+		tbForced: 'In the menu ☰, with the other commands: the menu button takes their place',
 		popupCornerLabel: 'Popup position',
 		popupCornerHelp: 'The corner of the window where the popup is shown.\nIt can be resized at the top left only: elsewhere, it keeps the size given by the maximum height and width below.',
 		'popupCorner.top-left': 'Top left (default)',
@@ -664,16 +1241,16 @@ var TEXTS = {
 		popupScrollHelp: 'Stays in view: the popup stays in its corner of the window when the page scrolls (default).\nScrolls with the page: it stays at its place in the page, and goes out of view when the page scrolls.\nAt the bottom of the window, the popup always stays in view: this choice is then grayed out.',
 		'popupScroll.floating': 'Stays in view (default)',
 		'popupScroll.static': 'Scrolls with the page',
-		popupHeightLabel: 'Max Popup Height in px (0=unlimited)',
-		popupHeightHelp: 'The maximum height of the popup, in pixels: at least 40, or 0 for unlimited.',
-		popupWidthLabel: 'Max Popup Width in px (0=unlimited)',
-		popupWidthHelp: 'The maximum width of the popup, in pixels: at least 100, or 0 for unlimited.',
+		popupRowsLabel: 'Max lines of the list (0=unlimited)',
+		popupRowsHelp: 'The maximum height of the popup, in lines of its list: beyond, the list scrolls. 0: up to the height of the window.',
+		popupColsLabel: 'Max Popup Width in characters (0=unlimited)',
+		popupColsHelp: 'The maximum width of the popup, in characters of its list: at least {min}, so that its menu stays reachable. 0: up to the width of the window.',
 		checkFilterLabel: 'Links checked by default',
 		checkFilterHelp: 'A regular expression on the file name: the links whose name matches it are checked in the popup, the others are listed, unchecked. Empty: every link is checked.\nThe filter is case-sensitive. To make it case-insensitive: `/expression/i`.\nExamples:\n(Blacklist) Every file but the eMule collections: `/^(?!.*\\.emulecollection$)/i`\n(Whitelist) Only the cbz, cbr, rar and zip files: `/\\.(cbz|cbr|rar|zip)$/i`',
 		section3: 'Edit box',
 		section3Help: 'The size of the text box of the edit mode',
 		editColLabel: 'Number of columns',
-		editColHelp: 'The width of the edit box, in characters.',
+		editColHelp: 'The width of the edit box, in characters: at least {min}, so that the menu of the popup stays reachable.',
 		editRowLabel: 'Number of rows',
 		editRowHelp: 'The height of the edit box, in lines.'
 	},
@@ -681,28 +1258,27 @@ var TEXTS = {
 		// le menu du gestionnaire de scripts
 		menuSettings: 'Emule Linker : Réglages',
 		menuHelp: 'Emule Linker : Aide',
-		menuDownload: 'Emule Linker : Télécharger',
-		menuCheckAll: 'Emule Linker : Cocher ou décocher tous les liens',
-		menuMode: 'Emule Linker : Changer de mode (édition/normal)',
-		menuView: 'Emule Linker : Changer de vue (agrandie/réduite/fermée)',
-		menuClose: 'Emule Linker : Fermer la popup',
 		menuOpen: 'Emule Linker : Ouvrir la popup',
 		menuDebug: 'Emule Linker : Activer ou désactiver les traces de débogage',
 		debugOn: 'Emule Linker : traces de débogage activées (voir la console du navigateur)',
 		debugOff: 'Emule Linker : traces de débogage désactivées',
-		// la popup : ses barres d'outils (& marque la lettre d'un raccourci), sa liste
-		checkAllTitle: 'Cocher ou décocher tous les liens (Ctrl+Alt+A)',
-		editMode: '&Mode édition',
-		editModeTitle: 'Modifier les liens sous forme de texte (Ctrl+Alt+M)',
-		normalMode: '&Mode normal',
-		normalModeTitle: 'Revenir à la liste (Ctrl+Alt+M)',
+		internalError: 'Erreur interne d\'Emule Linker ({what}) : merci de signaler le problème',
+		// la popup : ses barres d'outils (leurs bulles reçoivent le raccourci de leur action), sa liste
+		checkAllTitle: 'Cocher ou décocher tous les liens',
+		editMode: 'Mode édition',
+		editModeTitle: 'Modifier les liens sous forme de texte',
+		normalMode: 'Mode normal',
+		normalModeTitle: 'Revenir à la liste',
 		download: 'Télécharger',
-		downloadTitle: 'Télécharger les liens cochés (Ctrl+Alt+D)',
-		settingsTitle: 'Réglages (Ctrl+Alt+S)',
-		helpTitle: 'Aide (Ctrl+Alt+H)',
-		minimizeTitle: 'Réduire (Ctrl+Alt+X)',
-		maximizeTitle: 'Agrandir (Ctrl+Alt+X)',
-		closeTitle: 'Fermer (Ctrl+Alt+C)',
+		downloadTitle: 'Télécharger les liens cochés',
+		export: 'Exporter',
+		exportTitle: 'Exporter les liens cochés : les copier, ou les enregistrer en collection eMule, en CSV ou en fichier texte',
+		exportCopyKey: '{key} copie les liens',
+		settingsTitle: 'Réglages',
+		helpTitle: 'Aide',
+		minimizeTitle: 'Réduire',
+		maximizeTitle: 'Agrandir',
+		closeTitle: 'Fermer',
 		categoryTip: 'Catégorie : {name}\nLa catégorie des téléchargements, pour cette page seulement',
 		serverTip: 'Serveur : {name}\nLe serveur qui reçoit les liens, pour cette page seulement',
 		local: 'Local',
@@ -711,15 +1287,16 @@ var TEXTS = {
 		filteredTitle: 'Non coché par défaut : son nom ne correspond pas au filtre des réglages',
 		filterFlags: 'Les drapeaux g et y ne sont pas permis : chaque test dépendrait du précédent',
 		filterInvalid: 'Expression régulière non valide : {reason}',
-		// le message affiché à la fermeture de la popup (I-3)
+		// le message affiché à la fermeture de la popup (SF-10.4)
 		closedTitle: 'Emule Linker — Popup fermée',
-		closedText: 'Vous avez fermé la popup sur cette page. Pour la rouvrir :<ul><li>appuyez sur <b>Ctrl+Alt+O</b>, ou</li><li>appuyez sur <b>Ctrl+Alt+X</b>, ou</li><li>choisissez <b>Ouvrir la popup</b> dans le menu de {manager}.</li></ul>Pour garder la popup fermée sur toutes les pages, choisissez <b>Fermée</b> comme <b>Vue par défaut de la popup</b> dans les réglages, ou limitez ce script à certains sites (voir le {link}guide d\'installation{end}).',
+		closedText: 'Vous avez fermé la popup sur cette page. Pour la rouvrir :<ul>{keys}<li>choisissez <b>Ouvrir la popup</b> dans le menu de {manager}.</li></ul>Pour garder la popup fermée sur toutes les pages, choisissez <b>Fermée</b> comme <b>Vue par défaut de la popup</b> dans les réglages, ou limitez ce script à certains sites (voir le {link}guide d\'installation{end}).',
+		closedKey: '<li>appuyez sur <b>{key}</b>, ou</li>',
 		dontDisplay: 'Ne plus afficher',
 		closeMessageTitle: 'Fermer ce message (Échap)',
 		statusCloseTitle: 'Fermer ce message',
 		ok: 'OK',
 		userscriptManager: 'votre gestionnaire de scripts',
-		// l'aide (I-5)
+		// l'aide (SF-11)
 		help: 'Aide',
 		helpCloseTitle: 'Fermer l\'aide (Échap)',
 		helpIntro: 'Emule Linker affiche les liens ed2k de la page dans la popup, et envoie ceux que vous cochez à votre client ed2k.',
@@ -732,17 +1309,19 @@ var TEXTS = {
 		helpCategory: 'La catégorie des téléchargements, pour cette page seulement',
 		helpDownload: 'Envoie les liens cochés au serveur',
 		helpEditMode: 'Affiche les liens sous forme de texte, pour les modifier ; Mode normal revient à la liste',
+		helpExport: 'Copie les liens cochés, ou les enregistre en collection eMule, en CSV ou en fichier texte',
 		helpSettings: 'Ouvre les réglages : vos serveurs, l\'aspect de la popup',
 		helpHelp: 'Affiche ou masque cette aide',
 		helpView: 'Ne garde que la barre du haut / réaffiche toute la popup',
-		helpClose: 'Ferme la popup sur cette page ; Ctrl+Alt+O la rouvre',
+		helpClose: 'Ferme la popup sur cette page',
+		helpCloseKey: ' ; {key} la rouvre',
 		helpList: 'La liste des liens',
 		helpListClick: 'Cliquez sur un nom de fichier pour télécharger ce fichier seulement (vers le serveur et la catégorie choisis).',
 		helpListGray: 'Les liens en gris ne sont pas cochés par défaut : voir <b>Liens cochés par défaut</b> dans les réglages.',
 		helpListShadow: 'Une ombre sur un bord de la liste indique que d\'autres liens sont cachés au-delà.',
 		helpNext: 'La popup sur les pages suivantes',
 		helpNextView: 'Chaque page ouvre la popup dans la <b>Vue par défaut de la popup</b> des réglages : Agrandie, Réduite ou Fermée.',
-		helpNextMenu: 'Chaque commande est aussi dans le menu de {manager}, sous <b>Emule Linker</b>.',
+		helpNextMenu: 'Les réglages, cette aide et Ouvrir la popup sont aussi dans le menu de {manager}, sous <b>Emule Linker</b>.',
 		helpDoc: 'Documentation complète sur GitHub',
 		helpIssues: 'Signaler un problème',
 		// l'envoi, et les réponses des clients ({client} : eMule, aMule, MLDonkey)
@@ -829,11 +1408,10 @@ var TEXTS = {
 		categoryError: 'Aucune catégorie valide : écrivez-les sous la forme nom=valeur, séparées par ; (par exemple *default=0;Video=2)',
 		wholeNumber: 'Un nombre entier est attendu',
 		wholeAtLeast1: 'Un nombre entier, au moins 1, est attendu',
-		heightMin: 'Au moins 40 px, ou 0 pour illimitée : une popup plus petite cacherait son bouton Réglages',
-		widthMin: 'Au moins 100 px, ou 0 pour illimitée : une popup plus petite cacherait son bouton Réglages',
+		widthMin: 'Au moins {min} caractères, ou 0 pour illimitée : une popup plus étroite cacherait son menu, et les réglages',
+		editColMin: 'Au moins {min} colonnes : une zone d\'édition plus étroite cacherait le menu de la popup, et les réglages',
 		alertCategory: 'Aucune catégorie valide : la valeur par défaut (*default=0) est utilisée.',
-		alertHeight: 'Une hauteur maximale entre 1 et 39 px cacherait le bouton Réglages : 0 (illimitée) est utilisé à la place.',
-		alertWidth: 'Une largeur maximale entre 1 et 99 px cacherait le bouton Réglages : 0 (illimitée) est utilisé à la place.',
+		alertWidth: 'Une largeur maximale entre 1 et {max} caractères cacherait son menu, et les réglages : 0 (illimitée) est utilisé à la place.',
 		// les champs des réglages : {id}Label, {id}Help, {id}.{option}
 		section0: 'Général',
 		section0Help: 'Le comportement du script sur toutes les pages',
@@ -842,13 +1420,56 @@ var TEXTS = {
 		'language.browser': 'Langue du navigateur (par défaut)',
 		'language.en': 'English',
 		'language.fr': 'Français',
+		themeLabel: 'Thème',
+		themeHelp: 'Les couleurs de la popup, de ses messages, de son aide et de cette boîte de dialogue.\nAutomatique : Clair par défaut, ou Windows 11 sombre quand Windows ou le navigateur est en mode sombre, en suivant aussitôt un changement de mode.\nTous les thèmes sont montrés dans le [README](#usage).',
+		'theme.auto': 'Automatique (par défaut)',
+		// the French name of a theme is optional: without it, its English name is shown
+		'theme.light': 'Clair par défaut',
+		'theme.macos': 'macOS',
+		'theme.firefox': 'Firefox clair',
+		'theme.mono': 'Monochrome clair',
+		'theme.glass': 'Verre transparent',
+		'theme.legacy': 'Ancien style',
+		'theme.win11': 'Windows 11 sombre',
+		'theme.chrome': 'Chrome sombre',
+		'theme.steel': 'Bleu acier de nuit',
+		'theme.oled': 'Noir OLED',
+		menuTitle: 'Menu : les commandes qui ne tiennent pas dans les barres d\'une popup étroite',
+		menuServer: 'Serveur',
+		menuCategory: 'Catégorie',
+		menuExport: 'Exporter',
+		'export.copy': 'Copier les liens',
+		'export.collection': 'Collection eMule (.emulecollection)',
+		'export.csv': 'CSV (.csv)',
+		'export.text': 'Texte, un lien par ligne (.txt)',
+		'format.collection': 'collection eMule',
+		'format.csv': 'CSV',
+		'format.text': 'texte',
+		exportCopied: '{count} lien(s) copié(s)',
+		exportSaved: '{count} lien(s) exporté(s) ({format})',
+		exportNone: 'Aucun lien à exporter : cochez d\'abord des liens',
+		exportCopyFailed: 'Le navigateur a refusé de copier les liens',
+		'menu.settings': 'Réglages',
+		'menu.help': 'Aide',
+		'menu.minimize': 'Réduire',
+		'menu.maximize': 'Agrandir',
+		'menu.close': 'Fermer',
+		helpMenu: 'Dans une popup étroite : les commandes qui ne tiennent pas dans les barres, les boutons du haut d\'abord, puis les listes',
+		textSizeLabel: 'Taille',
+		textSizeHelp: 'La taille du texte, des boutons et des espacements de la popup, de ses messages, de son aide et de cette boîte de dialogue, de {min} % à {max} % : plus grande pour une tablette ou un écran à haute résolution ; 100 % : la taille des versions précédentes. Appliquée une fois enregistrée.',
+		sizeValue: '{value} %',
+		sizeValueDefault: '{value} % (par défaut)',
 		popupViewLabel: 'Vue par défaut de la popup',
-		popupViewHelp: 'La vue de la popup à l\'ouverture d\'une page qui contient des liens ed2k. Ce que vous changez dans la popup ne vaut que pour cette page : la page suivante s\'ouvre de nouveau dans cette vue.\nAgrandie : la liste des liens (par défaut).\nRéduite : seulement la barre du haut, avec le nombre de liens.\nFermée : pas de popup. La popup, et ces réglages aussi, ne s\'ouvrent alors que par les raccourcis clavier (`Ctrl+Alt+O` ou `Ctrl+Alt+X` : la popup, `Ctrl+Alt+S` : ces réglages) ou le menu de Tampermonkey ou de Violentmonkey (Emule Linker : Ouvrir la popup, Emule Linker : Réglages).',
+		popupViewHelp: 'La vue de la popup à l\'ouverture d\'une page qui contient des liens ed2k. Ce que vous changez dans la popup ne vaut que pour cette page : la page suivante s\'ouvre de nouveau dans cette vue.\nAgrandie : la liste des liens (par défaut).\nRéduite : seulement la barre du haut, avec le nombre de liens.\nFermée : pas de popup. La popup, et ces réglages aussi, ne s\'ouvrent alors que {keys}par le menu de Tampermonkey ou de Violentmonkey (Emule Linker : Ouvrir la popup, Emule Linker : Réglages).',
+		popupViewKeys: 'par les raccourcis clavier ({list}) ou ',
+		popupViewKeysPopup: '{keys} : la popup',
+		popupViewKeysDialog: '{key} : ces réglages',
+		keysOr: ' ou ',
 		'popupView.maximized': 'Agrandie (par défaut)',
 		'popupView.minimized': 'Réduite',
 		'popupView.closed': 'Fermée',
 		closeMessageLabel: 'Afficher un message à la fermeture de la popup',
-		closeMessageHelp: 'Quand vous fermez la popup (son bouton ✕, `Ctrl+Alt+C` ou le menu), un message indique comment la rouvrir.\nSa case « Ne plus afficher » décoche ce réglage.',
+		closeMessageHelp: 'Quand vous fermez la popup (son bouton ✕ ou le menu), un message indique comment la rouvrir.\nSa case « Ne plus afficher » décoche ce réglage.',
 		section1: 'Serveurs',
 		section1Help: 'Où les liens ed2k sont envoyés : les serveurs que vous utilisez, et celui qui reçoit les liens',
 		ed2kDlMethodLabel: 'Méthode de téléchargement ed2k',
@@ -869,10 +1490,43 @@ var TEXTS = {
 		emuleCatHelp: 'Les catégories proposées dans la popup, sous la forme `nom=valeur`, séparées par `;`\nUne `*` devant un nom en fait la catégorie par défaut.\neMule et aMule 3.x : la valeur est le numéro de la catégorie (`0` : la catégorie par défaut), par exemple `*default=0;Video=2`\neMule et aMule : Importer remplit le champ avec leurs catégories, dans leur ordre.\naMule 2.x : la valeur est le nom de la catégorie, par exemple `*Audio=audio;Video=Video` (un `;` dans un nom s\'écrit `\\;`)',
 		section2: 'Popup',
 		section2Help: 'L\'affichage de la popup, et les liens qu\'elle coche',
-		showCategoriesLabel: 'Afficher la liste des catégories',
-		showCategoriesHelp: 'Affiche la liste des catégories dans les barres d\'outils de la popup, pour choisir la catégorie des téléchargements de la page. Elle est grisée quand le serveur a moins de deux catégories.\nDécoché : les liens sont envoyés dans la catégorie par défaut du serveur.',
-		showServerListLabel: 'Afficher la liste des serveurs',
-		showServerListHelp: 'Affiche la liste des serveurs dans les barres d\'outils de la popup, pour envoyer les liens de la page à un autre serveur : Local, puis vos serveurs. Elle apparaît quand elle offre au moins deux choix, Local compris. Le serveur choisi ne vaut que pour cette page.\nDécoché : les liens sont envoyés au serveur coché plus haut.',
+		sectionKeys: 'Raccourcis clavier',
+		sectionKeysHelp: 'Les commandes tapées avec Ctrl+Alt et une lettre',
+		'key.checkAll': 'Cocher ou décocher tous les liens',
+		'key.download': 'Télécharger',
+		'key.copy': 'Copier les liens',
+		'key.export': 'Exporter (son menu)',
+		'key.editMode': 'Mode édition / Mode normal',
+		'key.settings': 'Réglages',
+		'key.help': 'Aide',
+		'key.view': 'Changer de vue (agrandie, réduite, fermée)',
+		'key.close': 'Fermer la popup',
+		'key.open': 'Ouvrir la popup',
+		'key.debug': 'Traces de débogage (activer / désactiver)',
+		keyNone: 'Aucun',
+		keysHelp: 'La lettre de chaque commande, tapée avec Ctrl+Alt ; Aucun : pas de raccourci. Une lettre ne peut servir qu\'une fois.\nUne lettre qui tape un caractère avec AltGr sur votre clavier (E sur un clavier français : €) ne fonctionne pas sous Firefox, et le navigateur prend certaines combinaisons (Ctrl+Alt+X sous Firefox). Appliqués une fois enregistrés.',
+		keyTwice: 'Déjà le raccourci de : {action}',
+		sectionToolbars: 'Barres d\'outils',
+		sectionToolbarsHelp: 'Où chaque contrôle des barres d\'outils de la popup est affiché',
+		sectionFold: 'Replier cette section',
+		sectionUnfold: 'Déplier cette section',
+		toolbarsHelp: 'Où chaque commande des barres de la popup est affichée, de gauche à droite. Dans le menu ☰ : dans le bouton menu à droite de la barre du haut, qui contient alors aussi les boutons en haut à droite. Non affiché : absent de cette barre. Une liste affichée nulle part, ni dans le menu, n\'est pas utilisée : le serveur ou la catégorie des réglages l\'est. La liste des serveurs apparaît quand elle offre au moins deux choix, Local compris ; la liste des catégories est grisée quand le serveur a moins de deux catégories. Une popup étroite met de toute façon plus de commandes dans le menu.',
+		toolbarsOrder: 'De gauche à droite, comme dans les barres',
+		toolbarTop: 'Barre du haut',
+		toolbarBottom: 'Barre du bas',
+		tbRowBox: 'Case et compteur',
+		tbRowEdit: 'Mode édition',
+		tbRowExport: 'Exporter',
+		tbRowServer: 'Liste des serveurs',
+		tbRowCategory: 'Liste des catégories',
+		tbRowDownload: 'Télécharger',
+		tbRowButtons: 'Boutons en haut à droite',
+		tbRowButtonsSub: 'réglages, aide, réduire, fermer',
+		'tb.shown': 'Affiché',
+		'tb.menu': 'Dans le menu ☰',
+		'tb.none': 'Non affiché',
+		'tb.always': 'Toujours affiché',
+		tbForced: 'Dans le menu ☰, avec les autres commandes : le bouton menu prend leur place',
 		popupCornerLabel: 'Position de la popup',
 		popupCornerHelp: 'Le coin de la fenêtre où la popup s\'affiche.\nElle ne se redimensionne qu\'en haut à gauche : ailleurs, elle garde la taille donnée par la hauteur et la largeur maximales ci-dessous.',
 		'popupCorner.top-left': 'En haut à gauche (par défaut)',
@@ -883,16 +1537,16 @@ var TEXTS = {
 		popupScrollHelp: 'Reste visible : la popup reste dans son coin de la fenêtre quand la page défile (par défaut).\nDéfile avec la page : elle reste à sa place dans la page, et sort de la vue quand la page défile.\nEn bas de la fenêtre, la popup reste toujours visible : ce choix est alors grisé.',
 		'popupScroll.floating': 'Reste visible (par défaut)',
 		'popupScroll.static': 'Défile avec la page',
-		popupHeightLabel: 'Hauteur max. de la popup en px (0=illimitée)',
-		popupHeightHelp: 'La hauteur maximale de la popup, en pixels : au moins 40, ou 0 pour illimitée.',
-		popupWidthLabel: 'Largeur max. de la popup en px (0=illimitée)',
-		popupWidthHelp: 'La largeur maximale de la popup, en pixels : au moins 100, ou 0 pour illimitée.',
+		popupRowsLabel: 'Lignes max. de la liste (0=illimitées)',
+		popupRowsHelp: 'La hauteur maximale de la popup, en lignes de sa liste : au-delà, la liste défile. 0 : jusqu\'à la hauteur de la fenêtre.',
+		popupColsLabel: 'Largeur max. de la popup en caractères (0=illimitée)',
+		popupColsHelp: 'La largeur maximale de la popup, en caractères de sa liste : au moins {min}, pour que son menu reste accessible. 0 : jusqu\'à la largeur de la fenêtre.',
 		checkFilterLabel: 'Liens cochés par défaut',
 		checkFilterHelp: 'Une expression régulière sur le nom du fichier : les liens dont le nom y correspond sont cochés dans la popup, les autres sont listés, décochés. Vide : tous les liens sont cochés.\nLe filtre tient compte de la casse. Pour l\'ignorer : `/expression/i`.\nExemples :\n(Liste d\'exclusion) Tous les fichiers sauf les collections eMule : `/^(?!.*\\.emulecollection$)/i`\n(Liste d\'autorisation) Seulement les fichiers cbz, cbr, rar et zip : `/\\.(cbz|cbr|rar|zip)$/i`',
 		section3: 'Zone d\'édition',
 		section3Help: 'La taille de la zone de texte du mode édition',
 		editColLabel: 'Nombre de colonnes',
-		editColHelp: 'La largeur de la zone d\'édition, en caractères.',
+		editColHelp: 'La largeur de la zone d\'édition, en caractères : au moins {min}, pour que le menu de la popup reste accessible.',
 		editRowLabel: 'Nombre de lignes',
 		editRowHelp: 'La hauteur de la zone d\'édition, en lignes.'
 	}
@@ -1637,14 +2291,42 @@ var eFiles=new Array();
 var eSizes=new Array();
 var eNames=new Array();		// the decoded file names, without the suffix of a duplicate name (SF-5.7)
 var checkRegExp = null;		// checkFilter read by saveConfig(): null checks every link (SF-5.7)
+var settingsNotices = [];	// the settings corrected while read (saveConfig()), told in the band once the popup is shown (SF-8.7)
 
-var textLanguage = scriptLanguage();	// the language of the texts (I-7), before the menus and the settings
+var themeName = 'light';	// the theme applied (SF-13): the one of the settings, or the one Automatic took
+var TOOLBARS_DEFAULT = JSON.parse(JSON.stringify(toolbars));	// the choices of the toolbars by default (SF-2.14)
+var SHORTCUTS_DEFAULT = JSON.parse(JSON.stringify(shortcuts));	// the letters of the shortcuts by default (SF-9)
+// the actions that can take a keyboard shortcut, in the order of the table of the settings (SF-9)
+var SHORTCUT_ORDER = ['checkAll', 'download', 'copy', 'export', 'editMode', 'settings', 'help', 'view', 'close', 'open', 'debug'];
+shortcuts = readShortcuts(storedSettings());	// the letters of the settings, before the menus and the dialog need them
+// the sections of the settings dialog, by the hidden field that makes each one in scriptConfig(), and the names that keep
+// their state (settingsUnfolded, settings_folded): found by this field, a section keeps its state wherever it is put
+var SECTION_KEYS = { section0: 'general', section1: 'servers', sectionKeys: 'shortcuts', sectionToolbars: 'toolbars',
+	section2: 'popup', section3: 'editbox' };
+var showCategories = true;	// the category lists used: shown in a toolbar or in the menu (toolbars, SF-2.14)
+var showServerList = true;	// the server lists used, when they offer two choices at least (toolbars, SF-2.14)
+var textLanguage = scriptLanguage();	// the language of the texts (SF-12), before the menus and the settings
 
 var sendingBusy = false;	// a sending (aMule, eMule, MLDonkey) waits for its answer, see setSending()
 var statusTimer = null;		// animation of the "Please wait" message, see showStatus()
 var statusHide = null;		// the band of a success, removed after STATUS_DELAY, see showStatus()
+var menuOpener = null;		// the button of the menu open (div#emlMenu), see showMenu()
+// the actions that a keyboard shortcut can do (shortcuts, SF-9), in the order of their test
+var SHORTCUT_ACTIONS = { checkAll: function () { checkAllButton(); }, download: function () { addButton(); },
+	view: function () { cycleView(); }, settings: function () { setButton(); }, help: function () { helpButton(); },
+	open: function () { openButton(); }, copy: function () { copyShortcut(); }, close: function () { closeButton(); },
+	editMode: function () { editButton(); }, export: function () { toggleExportMenu(null); }, debug: function () { debugButton(); } };
 
 // The fields that each download method uses: only them are shown in the settings of a server
+// the table of the toolbars in the settings (SF-2.14): a row per control, from left to right: its text, its field in the top
+// toolbar and in the bottom one (null: always shown, '': not in that toolbar)
+var TOOLBAR_ROWS = [['tbRowBox', null, null], ['tbRowEdit', 'tbEditTop', 'tbEditBottom'], ['tbRowExport', 'tbExportTop', 'tbExportBottom'],
+	['tbRowServer', 'tbServerTop', 'tbServerBottom'],
+	['tbRowCategory', 'tbCategoryTop', 'tbCategoryBottom'], ['tbRowDownload', null, 'tbDownloadBottom'], ['tbRowButtons', 'tbButtonsTop', '']];
+// the field of each choice, and its key in toolbars
+var TOOLBAR_FIELDS = { tbEditTop: 'editTop', tbEditBottom: 'editBottom', tbExportTop: 'exportTop', tbExportBottom: 'exportBottom',
+	tbServerTop: 'serverTop', tbServerBottom: 'serverBottom',
+	tbCategoryTop: 'categoryTop', tbCategoryBottom: 'categoryBottom', tbDownloadBottom: 'downloadBottom', tbButtonsTop: 'buttonsTop' };
 var METHOD_FIELDS = {
 	'local': [],
 	'emule': ['emuleUrl', 'emulePwd', 'emuleCat'],
@@ -1658,17 +2340,17 @@ var METHOD_SETTINGS = ['emuleUrl', 'emuleUser', 'emulePwd', 'emuleCat'];	// the 
 // one, called by testServer() and importCategories(); the buttons of the other methods are hidden
 var TEST_ACTIONS = {'amuleapi': testAmuleApi, 'emule': testEmule, 'amule': testAmuleWeb, 'mldonkey': testMldonkey};
 var IMPORT_ACTIONS = {'amuleapi': importAmuleCategories, 'emule': importEmuleCategories, 'amule': importAmuleWebCategories};
-var dialogServers = null;	// in the settings dialog: {active: id or null for Local, list: [{id, name, method, emuleUrl, emuleUser, emulePwd, emuleCat}], localDisabled: Local left out (I-14)}
+var dialogServers = null;	// in the settings dialog: {active: id or null for Local, list: [{id, name, method, emuleUrl, emuleUser, emulePwd, emuleCat}], localDisabled: Local left out (SF-8.20)}
 var dialogEdited = null;	// in the settings dialog: the id of the server whose settings are displayed, or null
 var SERVER_URL = /^https?:\/\/[^\/\s]+/i;	// the Server URL of every method: http or https only
 
 // The state of the popup on this page: 0 = closed, 1 = normal mode, 2 = edit mode. It is not stored:
 // each page starts in the default view of the settings (popupView, SF-10)
 var popupMode = 1;
-// The popup is minimized on this page: only its top toolbar is shown (I-2), its list or its edit box
+// The popup is minimized on this page: only its top toolbar is shown (SF-2.12), its list or its edit box
 // and its bottom toolbar are hidden, and kept as they are
 var popupMinimized = false;
-// The servers that the popup offers (I-6): Local, then the servers of the settings, in their order
+// The servers that the popup offers (SF-6.11): Local, then the servers of the settings, in their order
 // (readServers()): the checked one with its settings, the others with their name and method only, their
 // settings (their password included) read when one is chosen (useServer()). The one chosen applies to this page only (SF-6.9):
 // each page starts on the server checked in the settings
@@ -1677,20 +2359,21 @@ var pageServer = 'local';	// the id of the server chosen
 // The place of the help once moved by the user on this page, {left, top} in the window, or null: placed
 // beside the popup (placeHelp()). Not stored: each page places it automatically again
 var helpPlace = null;
+var toolbarsWidth = -1;		// the width of the popup when its toolbars were last adapted (adaptToolbars())
+var toolbarsWatched = false;	// the resizing of the window watched (watchToolbars())
+var toolbarsObserver = null;	// the observer of the width of the popup (watchToolbars()), disconnected when it is built again
 
 // -------------------------------------------------------------------------
 // Startup: the menus, the settings read, the links found, the popup shown, the keyboard shortcuts
 // -------------------------------------------------------------------------
 // add Emule Linker settings dialog to Greasemonkey Menu
-GM_registerMenuCommand(tr('menuSettings'), setButton, 's');
-GM_registerMenuCommand(tr('menuHelp'), helpButton, 'h');
-GM_registerMenuCommand(tr('menuDownload'), addButton, 'd');
-GM_registerMenuCommand(tr('menuCheckAll'), checkAllButton, 'a');
-GM_registerMenuCommand(tr('menuMode'), editButton, 'm');
-GM_registerMenuCommand(tr('menuView'), cycleView, 'x');
-GM_registerMenuCommand(tr('menuClose'), closeButton, 'c');
-GM_registerMenuCommand(tr('menuOpen'), openButton, 'o');
-GM_registerMenuCommand(tr('menuDebug'), debugButton, 't');
+// the menu of the userscript manager: the settings, the help, the popup opened, the debug traces; the letters of
+// their keyboard shortcuts as access keys; the debug traces, without a shortcut by default, take t when it is free
+GM_registerMenuCommand(tr('menuSettings'), setButton, shortcuts.settings ? shortcuts.settings.toLowerCase() : undefined);
+GM_registerMenuCommand(tr('menuHelp'), helpButton, shortcuts.help ? shortcuts.help.toLowerCase() : undefined);
+GM_registerMenuCommand(tr('menuOpen'), openButton, shortcuts.open ? shortcuts.open.toLowerCase() : undefined);
+GM_registerMenuCommand(tr('menuDebug'), debugButton, shortcuts.debug ? shortcuts.debug.toLowerCase()
+	: ([shortcuts.settings, shortcuts.help, shortcuts.open].indexOf('T') < 0) ? 't' : undefined);
 
 // configuring the settings dialog & display it if it is the first time
 scriptConfig();
@@ -1720,21 +2403,23 @@ if (n>0 && popupMode != 0) {
 		setMinimized(true);
 	}
 }
+// the settings corrected while read: told in the band, in orange until closed, rather than in an alert of the browser
+if (settingsNotices.length > 0) {
+	showStatus(settingsNotices.join(' '), 'doubt');
+}
 
-// Add key accelerator shortcuts
-(function(d){
-	d.addEventListener('keydown', function(e) {
-		// pressed ctl+alt
-		if (e.keyCode == 65 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { checkAllButton(); }	// ctl+alt+a
-		if (e.keyCode == 68 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { addButton(); }	// ctl+alt+d
-		if (e.keyCode == 67 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { closeButton(); } // ctl+alt+c
-		if (e.keyCode == 77 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { editButton(); } // ctl+alt+m
-		if (e.keyCode == 79 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { openButton(); } // ctl+alt+o
-		if (e.keyCode == 83 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { setButton(); } // ctl+alt+s
-		if (e.keyCode == 72 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { helpButton(); } // ctl+alt+h
-		if (e.keyCode == 88 && !e.shiftKey && e.ctrlKey && e.altKey && !e.metaKey) { cycleView(); } // ctl+alt+x
-	}, false);
-})(document);
+// the keyboard shortcuts: Ctrl+Alt and the letter of an action (shortcuts, SF-9), without Shift nor Meta
+document.addEventListener('keydown', function (e) {
+	if (!e.ctrlKey || !e.altKey || e.shiftKey || e.metaKey) {
+		return;
+	}
+	for (var action in SHORTCUT_ACTIONS) {
+		if (shortcuts[action] && e.keyCode == shortcuts[action].toUpperCase().charCodeAt(0)) {
+			SHORTCUT_ACTIONS[action]();
+			return;
+		}
+	}
+}, false);
 
 // -------------------------------------------------------------------------
 // Detection: the ed2k links of the page (SF-1)
@@ -1794,7 +2479,7 @@ function getEd2kLinks(links, files, sizes, names) {
 
 			// Check if the filename has been encoded twice
 			if(tlnk[2].search(/%(?:[0-9A-Fa-f]{2})/)>-1) {
-				// Sometimes names are encoded twice. Therefore we do it a second time. It may cause problems with filename using % followed by chars but it should be rare for Comics name.
+				// Sometimes names are encoded twice. Therefore we do it a second time. It may cause problems with filename using % followed by chars but it should be rare in file names.
 				try {
 					tlnk[2]=decodeURIComponent(tlnk[2]);
 				}
@@ -1893,6 +2578,106 @@ function isValidEd2kFile(tlnk) {
 // -------------------------------------------------------------------------
 
 /**
+* The theme of the settings (SF-13): its colors declared as variables (--eml-<name>) on the boxes of the script
+* only, never on the page, in a style element of the page, written again when Automatic follows a change of
+* mode of Windows or of the browser. Called before a box of the script is shown.
+*/
+function applyTheme() {
+	var dark = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+	var name = (theme == 'auto') ? ((dark && dark.matches) ? THEME_AUTO_DARK : THEME_AUTO_LIGHT) : theme;
+	var colors = THEMES[name] || THEMES.light;
+	var icons = themeIcons();
+	var css = '';
+	themeName = name;
+	for (var key in colors) {
+		if (key == 'scheme') {
+			css += ' color-scheme: ' + colors[key] + ';';
+		}
+		else if (key != 'icons') {
+			css += ' --eml-' + key + ': ' + scaledCss(colors[key]) + ';';	// its radius and its sizes at the size chosen
+		}
+	}
+	// the icons already shown, in the set of the new theme (Automatic following a change of mode)
+	if (themeIcons() != icons) {
+		var shown = document.querySelectorAll('svg[data-eml-icon]');
+		for (var i=0; i<shown.length; i++) {
+			shown[i].outerHTML = icon(shown[i].getAttribute('data-eml-icon'));
+		}
+	}
+	var style = document.getElementById('emlTheme');
+	if (!style) {
+		style = document.createElement('style');
+		style.id = 'emlTheme';
+		(document.head || document.documentElement).appendChild(style);
+		if (dark && dark.addEventListener) {
+			dark.addEventListener('change', function () { if (theme == 'auto') { applyTheme(); } });
+		}
+	}
+	style.textContent = 'div#theDiv, div#emlMsg, div#emlMsgBackdrop, div#emlHelp, div#emlStatus, div#emlMenu, #GM_config, #GM_config_backdrop {'
+		+ css + ' }' + THEME_CSS;
+	trace('applyTheme() ' + name);
+}
+
+/**
+* The set of icons of the theme applied (SF-13): a set of ICONS (solid by default)
+*/
+function themeIcons() {
+	var colors = THEMES[themeName] || THEMES.light;
+	return ICONS[colors.icons] ? colors.icons : 'solid';
+}
+
+/**
+* An icon of the set of the theme (or of outline, when the set does not change it), marked with its name
+* (data-eml-icon) so that a change of theme can draw it again
+* @param name settings, minimize, maximize, help, ok, warn or close
+*/
+function icon(name) {
+	return (ICONS[themeIcons()][name] || ICONS.outline[name]).replace('<svg ', '<svg data-eml-icon="' + name + '" ');
+}
+
+/**
+* The factor of the size chosen (SF-2.5): 1 at 100 %, the size of the earlier versions
+*/
+function sizeFactor() {
+	return (textSize >= SIZE_MIN && textSize <= SIZE_MAX) ? textSize / 100 : 1;
+}
+
+/**
+* CSS at the size chosen (SF-2.5): every length of 3 px or more multiplied by the factor of the size, the borders of
+* 1 and 2 px kept thin. Used for the CSS of the PARAM block, the styles set by the code and the values of the themes.
+* @param css a style sheet, a style attribute or a value
+*/
+function scaledCss(css) {
+	var factor = sizeFactor();
+	return (factor == 1) ? css : String(css).replace(/(-?\d*\.?\d+)px/g, function (all, n) {
+		return (Math.abs(parseFloat(n)) < 3) ? all : (Math.round(parseFloat(n) * factor * 100) / 100) + 'px';
+	});
+}
+
+/**
+* The list of the popup no higher than popupRows lines (SF-2.3): beyond, it scrolls. The height of its lines is
+* measured, as it follows the size chosen.
+* @param list the list (divBody)
+*/
+function limitListRows(list) {
+	var rows = list.querySelectorAll('tr');
+	if (popupRows > 0 && rows.length > popupRows) {
+		list.style.maxHeight = (rows[popupRows].getBoundingClientRect().top - rows[0].getBoundingClientRect().top) + 'px';
+	}
+}
+
+/**
+* The options of the setting Theme: Automatic, then every theme of THEMES, in its order, named by its text theme.<name>
+*/
+function themeOptions() {
+	var options = { 'auto': tr('theme.auto') };
+	for (var name in THEMES) {
+		options[name] = tr('theme.' + name);
+	}
+	return options;
+}
+
+/**
 * Creating the Popup
 * @param links array filled with ed2k links
 * @param files array filled with ed2k file names
@@ -1903,36 +2688,29 @@ function createPopup(links, files, sizes) {
 	var container; 	// the popup inserted in the page
 
 	trace("createPopup");
-	delCloseMessage();	// the popup opened again: the message of its closing is no longer needed (I-3)
+	applyTheme();
+	delCloseMessage();	// the popup opened again: the message of its closing is no longer needed (SF-10.4)
 	// First the Div
 	theDiv=document.createElement('div');
 	divBody = '<div id="theDiv" style="\
 					'+ popupPlace() + ' \
-					background-color:white; \
-					opacity:0.97; \
-					color:black;\
 					margin:0;\
-					border:2px solid #2b5c8a;\
 					z-index:255;\
 					text-align:left;\
 					font-size:10px;\
 					line-height:90%;\
 					padding-left:5px;\
 					padding-right:5px;';
-	if (popupHeight != 0 && popupMode==1) {
-		divBody += 'max-height:'+ popupHeight +'px;';
+	divBody += 'max-height:100%;';	// the list, limited in lines (popupRows), scrolls inside the window
+	if (popupCols != 0 && popupMode==1) {
+		divBody += 'max-width:min(100% - 10px - 2px - 2px, ' + popupCols + 'ch);';	// characters of the list (its font, at the size chosen)
 	}
 	else {
-		divBody += 'max-height:100%;';
+		// in the window, its padding (10 px, at the size chosen) and its frame (2 px on each side, thin at every size) included
+		divBody += 'max-width:calc(100% - 10px - 2px - 2px);';
 	}
-	if (popupWidth != 0 && popupMode==1) {
-		divBody += 'max-width:'+ popupWidth +'px;';
-	}
-	else {
-		divBody += 'max-width:100%;';
-	}
-	divBody += 'overflow:auto">';
-	divBody += '<style>' + POPUP_CSS + '</style>';	// the look of the popup, in the PARAM block
+	divBody = scaledCss(divBody + 'overflow:auto">');	// its font and its margins at the size chosen
+	divBody += '<style>' + scaledCss(POPUP_CSS) + '</style>';	// the look of the popup, in the PARAM block
 	divBody += '</div>';
 	theDiv.innerHTML=divBody;
 	document.body.insertBefore(theDiv, document.body.firstChild);
@@ -1956,9 +2734,10 @@ function createPopup(links, files, sizes) {
 		case 1: // normal mode
 			tmp_link.innerHTML = htmlLinkList(links, files, sizes);
 			// the list framed by two lines from one side of the popup to the other, which do not scroll
-			// with it (its borders); none in edit mode, where the frame of the edit box separates (I-2)
+			// with it (its borders); none in edit mode, where the frame of the edit box separates (SF-2.9)
 			tmp_link.className = 'emlList';
 			container.appendChild(tmp_link);
+			limitListRows(tmp_link);
 			container.style.resize = popupResize();
 			// a column: top toolbar, list, bottom toolbar. Only the list scrolls, the
 			// toolbars always stay visible, whatever the number of links (SF-2.9)
@@ -1983,8 +2762,7 @@ function createPopup(links, files, sizes) {
 			break;
 
 		default:
-			trace("ERROR: popupMode=" + popupMode);
-			alert("Error !!! popupMode unknown.");
+			internalError('popupMode=' + popupMode);
 			break;
 	}
 
@@ -1995,12 +2773,360 @@ function createPopup(links, files, sizes) {
 	// the counters the links that Download sends
 	fitCounters();
 	syncCheckAll();
+	adaptToolbars();
+	watchToolbars(container);
+}
+
+/**
+* The toolbars of the popup adapted to its width (SF-2.13): their controls keep their width; as soon as a toolbar does
+* not fit, the menu button takes the place of the buttons at the top right; then, while a toolbar does not fit, its
+* next control goes into the menu, from left to right (Edit mode, Export, the server list, the category list), each
+* toolbar on its own; at last, the free space of the top toolbar, kept until then to move the popup. The check box,
+* the counter and Download stay. Called once the popup is built, when its width changes, when the window is resized
+* and when the server changes.
+*/
+function adaptToolbars() {
+	var div = document.getElementById('theDiv');
+	var foldable = '.emlEditBtn, select.emlSrv, select.emlCat, .emlExport, .emlDrag';	// what goes into the menu, in each toolbar
+
+	if (div == null) {
+		return;
+	}
+	closeToolbarMenu();
+	div.style.minWidth = '';
+	[].forEach.call(div.querySelectorAll('.toolbar > .emlFolded'), function (control) {
+		control.classList.remove('emlFolded');
+	});
+	// a control in the menu by the settings, or a toolbar that does not fit: the menu button first (SF-2.14)
+	setToolbarsMenu(div, toolbarsMenuChosen());
+	if (toolbarsOverflow(div)) {
+		setToolbarsMenu(div, true);
+	}
+	// then each toolbar on its own, its controls shown in it from left to right (in the order of the document)
+	var bars = [].slice.call(div.querySelectorAll('.toolbar'));
+	var queues = bars.map(function (bar) {
+		return [].filter.call(bar.querySelectorAll(foldable), function (control) {
+			return control.parentNode == bar && !control.classList.contains('emlOff');
+		});
+	});
+	for (var folding=true; folding; ) {
+		folding = false;
+		bars.forEach(function (bar, b) {
+			if (barOverflow(bar) && queues[b].length) {
+				queues[b].shift().classList.add('emlFolded');
+				folding = true;
+			}
+		});
+		markRights();
+	}
+	// every step done and a toolbar still cut (a very narrow edit box or limit, a theme or a language with wider
+	// controls): the popup widened to it, so that its menu, and the settings, stay reachable
+	var extra = Math.max.apply(null, [0].concat([].map.call(div.querySelectorAll('.toolbar'), function (bar) {
+		return bar.getClientRects().length ? bar.scrollWidth - bar.clientWidth : 0;
+	})));
+	if (extra > 1) {
+		div.style.minWidth = (parseFloat(getComputedStyle(div).width) + extra) + 'px';
+	}
+	toolbarsWidth = div.getBoundingClientRect().width;
+	// what is folded, for the traces and the tests: menu, then top.<control>, bottom.<control>
+	var names = { emlEditBtn: 'edit', emlSrv: 'server', emlCat: 'category', emlExport: 'export', emlDrag: 'space' };
+	div.dataset.folded = (div.classList.contains('emlMenuOn') ? ['menu'] : []).concat([].map.call(div.querySelectorAll('.toolbar > .emlFolded'),
+		function (control) {
+			return control.parentNode.id.replace('eml', '').toLowerCase() + '.' + names[control.className.match(/eml(EditBtn|Srv|Cat|Export|Drag)\b/)[0]];
+		})).join(' ');
+	trace('adaptToolbars() folded: ' + (div.dataset.folded || 'nothing'));
+}
+
+/**
+* The menu button in place of the buttons at the top right, or not (emlMenuOn, POPUP_CSS)
+*/
+function setToolbarsMenu(div, on) {
+	div.classList.toggle('emlMenuOn', on);
+	markRights();
+}
+
+/**
+* The first control shown of each group at the right of a toolbar takes its place (emlRight)
+*/
+function markRights() {
+	markRight(document.getElementById('emlTop'), ['.emlMenu', '[data-icon=settings]']);
+	markRight(document.getElementById('emlBottom'), ['select.emlSrv', 'select.emlCat', '.emlAdd']);
+}
+
+/**
+* The first control shown of a group at the right of a toolbar, pushed to the right (emlRight)
+* @param bar the toolbar
+* @param selectors the controls of the group, in their order
+*/
+function markRight(bar, selectors) {
+	var first = null;
+
+	if (bar == null) {
+		return;
+	}
+	for (var i=0; i<selectors.length; i++) {
+		var control = bar.querySelector(selectors[i]);
+		if (control) {
+			control.classList.remove('emlRight');
+			if (first == null && getComputedStyle(control).display != 'none') {
+				first = control;
+			}
+		}
+	}
+	if (first) {
+		first.classList.add('emlRight');
+	}
+}
+
+/**
+* A toolbar shown wider than the popup: its controls would be cut
+*/
+function toolbarsOverflow(div) {
+	return [].some.call(div.querySelectorAll('.toolbar'), barOverflow);
+}
+
+/**
+* A toolbar shown wider than the popup
+*/
+function barOverflow(bar) {
+	return bar.getClientRects().length > 0 && bar.scrollWidth > bar.clientWidth + 1;
+}
+
+/**
+* The toolbars adapted again when the width of the popup changes (the window, the user resizing it); the
+* changes of width made by the adaptation itself are left out
+*/
+function watchToolbars(div) {
+	if (window.ResizeObserver) {
+		if (toolbarsObserver) {
+			toolbarsObserver.disconnect();	// the popup built again: one observer only, the one of the new popup
+		}
+		toolbarsObserver = new ResizeObserver(function () {
+			if (document.body.contains(div) && Math.abs(div.getBoundingClientRect().width - toolbarsWidth) > 0.5) {
+				adaptToolbars();
+			}
+		});
+		toolbarsObserver.observe(div);
+	}
+	if (!toolbarsWatched) {
+		toolbarsWatched = true;
+		window.addEventListener('resize', adaptToolbars, false);	// a wider window can show what was folded
+	}
+}
+
+/**
+* The button of the menu of the toolbars: opens or closes it
+*/
+function toggleToolbarMenu() {
+	var menu = document.getElementById('emlMenu');
+	if (menu && menu.getAttribute('data-for') == 'toolbars') {
+		closeToolbarMenu();
+	}
+	else {
+		openToolbarMenu();
+	}
+}
+
+/**
+* The menu of the toolbars (SF-2.13), under its button: the controls folded by adaptToolbars() from either toolbar, or put
+* there by the settings, once each, in the order Server, Category, Edit mode, Export (a heading and its commands), then
+* Settings, Help, Minimize, Close. Its lists
+* act as those of the toolbars; it closes on a choice, on Escape and on a click elsewhere.
+*/
+function openToolbarMenu() {
+	var div = document.getElementById('theDiv');
+	var button = document.getElementById('emlMenuBtn');
+
+	if (button == null || !div.classList.contains('emlMenuOn')) {
+		return;
+	}
+	trace('openToolbarMenu() folded: ' + div.dataset.folded);
+	applyTheme();
+	var menu = newMenu('toolbars');
+	// a control is in the menu when the settings put it there, or when it is folded in either toolbar (SF-2.14)
+	var folded = function (name) { return div.querySelector('.toolbar > .' + name + '.emlFolded') != null; };
+	if (toolbars.serverTop == 'menu' || folded('emlSrv')) {
+		menuList(menu, 'srv', tr('menuServer'));
+	}
+	if (toolbars.categoryTop == 'menu' || folded('emlCat')) {
+		menuList(menu, 'cat', tr('menuCategory'));
+	}
+	if (menu.querySelector('select')) {
+		menu.appendChild(document.createElement('hr'));
+	}
+	var edit = document.getElementById('emlEdit');
+	if (edit && (toolbars.editTop == 'menu' || folded('emlEditBtn'))) {
+		menuCommand(menu, '', edit.textContent, shortcutText('editMode'), editButton, 'edit');
+	}
+	if (toolbars.exportTop == 'menu' || folded('emlExport')) {
+		menuSeparator(menu);
+		var head = document.createElement('div');
+		head.className = 'emlMenuHead';
+		head.textContent = tr('menuExport');
+		menu.appendChild(head);
+		exportCommands(menu);
+		menuSeparator(menu);
+	}
+	menuCommand(menu, 'settings', tr('menu.settings'), shortcutText('settings'), setButton, 'settings');
+	menuCommand(menu, 'help', tr('menu.help'), shortcutText('help'), helpButton, 'help');
+	menuCommand(menu, popupMinimized ? 'maximize' : 'minimize', tr(popupMinimized ? 'menu.maximize' : 'menu.minimize'),
+		shortcutText('view'), minimizeButton, 'minimize');
+	menuCommand(menu, 'close', tr('menu.close'), shortcutText('close'), closeButton, 'close');
+	showMenu(menu, button, false);
+}
+
+/**
+* A new menu (div#emlMenu, MENU_CSS): the menu of the toolbars, or the one of Export; one at a time
+* @param kind toolbars or export (data-for)
+*/
+function newMenu(kind) {
+	var menu = document.createElement('div');
+	menu.id = 'emlMenu';
+	menu.setAttribute('role', 'menu');
+	menu.setAttribute('data-for', kind);
+	menu.innerHTML = '<style>' + scaledCss(MENU_CSS) + '</style>';	// the look of the menu, in the PARAM block
+	return menu;
+}
+
+/**
+* A menu shown under its button (its opener), or under the top toolbar at the right without it; it closes on a choice, on
+* Escape and on a click elsewhere
+* @param left true to align it on the left edge of its button, false on its right edge
+*/
+function showMenu(menu, button, left) {
+	document.body.appendChild(menu);
+	placeToolbarMenu(menu, button || document.getElementById('emlTop'), left && button != null);
+	if (button) {
+		button.setAttribute('aria-expanded', 'true');
+	}
+	menuOpener = button;
+	document.addEventListener('keydown', toolbarMenuOnEscape, true);
+	document.addEventListener('mousedown', toolbarMenuOnClick, true);
+}
+
+/**
+* A line between two groups of the menu, once
+*/
+function menuSeparator(menu) {
+	var last = menu.lastElementChild;
+	if (last && last.tagName != 'HR' && last.tagName != 'STYLE') {
+		menu.appendChild(document.createElement('hr'));
+	}
+}
+
+/**
+* A list of the menu, a copy of the list of the toolbars that it replaces: its choice is made in the list of the
+* toolbars, which does the rest (changeServer(), changeCat())
+* @param menu the menu
+* @param id the id of the list of the top toolbar (srv, cat)
+* @param label its label in the menu
+*/
+function menuList(menu, id, label) {
+	var source = document.getElementById(id);
+	var row = document.createElement('label');
+	var text = document.createElement('span');
+
+	if (source == null) {
+		return;
+	}
+	var list = source.cloneNode(true);
+	list.id = id + 'Menu';
+	list.className = '';
+	list.removeAttribute('name');
+	list.value = source.value;
+	list.addEventListener('change', function () {
+		closeToolbarMenu();
+		source.value = list.value;
+		source.dispatchEvent(new Event('change'));
+	}, false);
+	row.className = 'emlMenuRow';
+	text.textContent = label;
+	row.appendChild(text);
+	row.appendChild(list);
+	menu.appendChild(row);
+}
+
+/**
+* A command of the menu: its icon, its name, its shortcut
+* @param name the name of the command (data-menu), action the function it calls
+*/
+function menuCommand(menu, iconName, label, key, action, name) {
+	var row = document.createElement('button');
+	row.type = 'button';
+	row.className = 'emlMenuRow';
+	row.setAttribute('role', 'menuitem');
+	row.setAttribute('data-menu', name);
+	row.innerHTML = '<span class="emlMenuIcon">' + (iconName ? icon(iconName) : '') + '</span><span class="emlMenuText"></span><span class="emlMenuKey"></span>';
+	row.querySelector('.emlMenuText').textContent = label;
+	row.querySelector('.emlMenuKey').textContent = key;
+	row.addEventListener('click', function () {
+		closeToolbarMenu();
+		action();
+	}, false);
+	menu.appendChild(row);
+}
+
+/**
+* The menu under its button, aligned on its right edge (on its left one: left), kept in the window: above it when there is
+* no room below; with room on neither side, moved up until its bottom fits (MENU_CSS keeps it as high as the window at most)
+*/
+function placeToolbarMenu(menu, button, left) {
+	var b = button.getBoundingClientRect();
+	var m = menu.getBoundingClientRect();
+	var width = document.documentElement.clientWidth;
+	var height = document.documentElement.clientHeight;
+	var top = b.bottom + 3;
+
+	if (top + m.height > height - 4) {
+		top = (b.top - m.height - 3 >= 4) ? b.top - m.height - 3 : height - 4 - m.height;
+	}
+	menu.style.left = Math.max(4, Math.min(left ? b.left : b.right - m.width, width - m.width - 4)) + 'px';
+	menu.style.top = Math.max(4, top) + 'px';
+}
+
+/**
+* Close the menu of the toolbars, when it is open
+*/
+function closeToolbarMenu() {
+	var menu = document.getElementById('emlMenu');
+
+	if (menu) {
+		menu.parentNode.removeChild(menu);
+	}
+	[].forEach.call(document.querySelectorAll('#theDiv [aria-expanded=true]'), function (button) {
+		button.setAttribute('aria-expanded', 'false');
+	});
+	menuOpener = null;
+	document.removeEventListener('keydown', toolbarMenuOnEscape, true);
+	document.removeEventListener('mousedown', toolbarMenuOnClick, true);
+}
+
+/**
+* Escape closes the menu, and only the menu
+*/
+function toolbarMenuOnEscape(e) {
+	if (e.key == 'Escape') {
+		e.stopPropagation();
+		e.preventDefault();
+		closeToolbarMenu();
+	}
+}
+
+/**
+* A click out of the menu and of its button closes it
+*/
+function toolbarMenuOnClick(e) {
+	var menu = document.getElementById('emlMenu');
+	var button = menuOpener;
+	if (menu && !menu.contains(e.target) && !(button && button.contains(e.target))) {
+		closeToolbarMenu();
+	}
 }
 
 /**
 * The shadows on the edges of the list where links are hidden, laid over it: they tell that the list
 * goes on, whatever the scrollbar (Firefox shows it only under the mouse). A background of the list
-* cannot do it: Chrome scrolls it with the list (I-2)
+* cannot do it: Chrome scrolls it with the list (SF-2.9)
 * @param container the popup
 * @param list the list of the links, which scrolls
 */
@@ -2039,14 +3165,14 @@ function placeScrollShadows(container, list, shadows) {
 		shadows[i].style.width = list.clientWidth + 'px';
 	}
 	shadows[0].style.top = top + 'px';
-	shadows[1].style.top = (top + list.clientHeight - 7) + 'px';
+	shadows[1].style.top = (top + list.clientHeight - parseFloat(getComputedStyle(shadows[1]).height)) + 'px';
 	shadows[0].style.display = (shown && list.scrollTop > 0) ? 'block' : 'none';
 	shadows[1].style.display = (shown && list.scrollTop + list.clientHeight < list.scrollHeight - 1) ? 'block' : 'none';
 }
 
 /**
 * The counters as wide as their widest value on the page, all the links checked: checking or unchecking
-* links moves nothing in the toolbars (I-2). In edit mode, a text with more links widens them.
+* links moves nothing in the toolbars (SF-2.10). In edit mode, a text with more links widens them.
 */
 function fitCounters() {
 	var counters=document.querySelectorAll('#theDiv .emlCount');
@@ -2074,7 +3200,7 @@ function popupPlace() {
 */
 function viewIcon(minimized) {
 	var up = (popupCorner.indexOf('bottom') == 0) ? minimized : !minimized;
-	return ICONS[up ? 'minimize' : 'maximize'];
+	return icon(up ? 'minimize' : 'maximize');
 }
 
 /**
@@ -2090,6 +3216,7 @@ function popupResize() {
 */
 function delPopup() {
 	trace('delPopup()');
+	closeToolbarMenu();
 	var theDiv = document.getElementById ("theDiv");
 	var line = document.getElementById('emlStatus');
 	if (theDiv && line && theDiv.contains(line)) {
@@ -2130,7 +3257,7 @@ function htmlLinkList(links, files, sizes) {
 		else {
 			html += '<tr class="filtered" title="' + tr('filteredTitle') + '"><td><input class="smallcheck" name="l' + i + '" type="checkbox" id="l' + i + '" tabindex="' + (i+1) + '" value="1" /></td>';
 		}
-		html += '<td style="white-space:nowrap;"><a class="ed2k" href="' + linkHref(links[i]) + '" target="emule">' + files[i] + '</a></td><td style="min-width:40px;">'+ humanFileSize(sizes[i], false, 0) + '</td></tr>'; //
+		html += '<td style="white-space:nowrap;"><a class="ed2k" href="' + linkHref(links[i]) + '" target="emule">' + files[i] + '</a></td><td>'+ humanFileSize(sizes[i], false, 0) + '</td></tr>'; //
 	}
 
 	html += '</table>';
@@ -2164,7 +3291,7 @@ function addToolbar(container, pos) {
 
 	// one row of controls (SF-2.7): the top one is the only one shown when the popup is minimized,
 	// so that it holds the sending; the bottom one also, at its right, nearest to the middle of the
-	// page, where the mouse usually is (I-2)
+	// page, where the mouse usually is (SF-2.7)
 	var bar=document.createElement('div');
 	bar.className = 'toolbar';
 	bar.id = (pos==0) ? 'emlTop' : 'emlBottom';
@@ -2179,7 +3306,7 @@ function addToolbar(container, pos) {
 	box.className = 'smallcheck checkall';
 	box.name = (pos==0) ? "lall" : "lall2";
 	box.id = (pos==0) ? "checkall" : "checkall2";
-	box.title = tr('checkAllTitle');
+	box.title = keyTitle('checkAllTitle', 'checkAll');
 	// in edit mode the link list is a textarea: there is no checkbox to toggle
 	box.disabled = (popupMode == 2);
 	box.addEventListener('click', function(e){ checkButton(e.target); }, false );
@@ -2190,24 +3317,33 @@ function addToolbar(container, pos) {
 	count.className = 'emlCount';
 	bar.appendChild(count);
 
-	// bottom toolbar: Edit/Normal mode
-	if (pos==1) {
-		var edit = toolbarButton(trLabel((popupMode == 2) ? 'normalMode' : 'editMode'),
-			tr((popupMode == 2) ? 'normalModeTitle' : 'editModeTitle'), editButton, '');
-		edit.id = 'emlEdit';
-		bar.appendChild(edit);
-	}
+	// Edit/Normal mode, in each toolbar, shown as the settings ask (SF-2.14): in the bottom one by default
+	var edit = toolbarButton(keyLabel((popupMode == 2) ? 'normalMode' : 'editMode', 'editMode'),
+		keyTitle((popupMode == 2) ? 'normalModeTitle' : 'editModeTitle', 'editMode'), editButton, 'emlEditBtn' + offClass((pos==0) ? toolbars.editTop : toolbars.editBottom));
+	edit.id = (pos==0) ? 'emlEditTop' : 'emlEdit';
+	bar.appendChild(edit);
+
+	// Export, after Edit mode, shown as the settings ask (SF-2.14): in the bottom toolbar by default; its menu (SF-14)
+	var exp = toolbarButton(keyLabel('export', 'export'), keyTitle('exportTitle', 'export')
+		+ (shortcuts.copy ? '\n' + tr('exportCopyKey', {key: shortcutText('copy')}) : ''), function () { toggleExportMenu(exp); }, 'emlExport'
+		+ offClass((pos==0) ? toolbars.exportTop : toolbars.exportBottom));
+	exp.id = (pos==0) ? 'emlExportTop' : 'emlExport';
+	exp.setAttribute('aria-haspopup', 'menu');
+	exp.setAttribute('aria-expanded', 'false');
+	bar.appendChild(exp);
 
 	// the sending: the server (when there is a choice) and the category, each one unless hidden by the
 	// settings, then Download; at the right of the bottom toolbar
 	var sending = [];
 	if (showServerList && pageServers.length > 1) {
 		sending.push(serverList(pos));
+		sending[sending.length - 1].className += offClass((pos==0) ? toolbars.serverTop : toolbars.serverBottom);
 	}
 	if (showCategories) {
 		sending.push(categoryList(pos));
+		sending[sending.length - 1].className += offClass((pos==0) ? toolbars.categoryTop : toolbars.categoryBottom);
 	}
-	var add = toolbarButton(trLabel('download'), tr('downloadTitle'), addButton, 'emlAdd');
+	var add = toolbarButton(keyLabel('download', 'download'), keyTitle('downloadTitle', 'download'), addButton, 'emlAdd' + offClass((pos==0) ? 'shown' : toolbars.downloadBottom));
 	add.disabled = sendingBusy;	// disabled while a sending waits for its answer (setSending())
 	sending.push(add);
 	if (pos==1) {
@@ -2217,34 +3353,59 @@ function addToolbar(container, pos) {
 		bar.appendChild(sending[s]);
 	}
 
-	// top toolbar, at its right: settings, help, minimize or maximize, close
+	// top toolbar, at its right: the menu of a narrow popup (adaptToolbars()), settings, help, minimize or maximize, close;
+	// before them, the free space of the toolbar, kept to move the popup (SF-2.13)
 	if (pos==0) {
-		bar.appendChild(iconButton('settings', tr('settingsTitle'), setButton, 'emlIcon emlRight'));
-		var help = iconButton('help', tr('helpTitle'), helpButton, 'emlIcon');
+		var drag = document.createElement('span');
+		drag.className = 'emlDrag';
+		bar.appendChild(drag);
+		var menu = iconButton('menu', tr('menuTitle'), toggleToolbarMenu, 'emlIcon emlMenu');
+		menu.id = 'emlMenuBtn';
+		menu.setAttribute('aria-haspopup', 'menu');
+		menu.setAttribute('aria-expanded', 'false');
+		bar.appendChild(menu);
+		bar.appendChild(iconButton('settings', keyTitle('settingsTitle', 'settings'), setButton, 'emlIcon emlRight'));
+		var help = iconButton('help', keyTitle('helpTitle', 'help'), helpButton, 'emlIcon');
 		help.id = 'emlHelpBtn';
 		bar.appendChild(help);
 		// its name as data-icon (minimize or maximize), its arrow as the corner of the popup asks (viewIcon())
-		var min = toolbarButton(viewIcon(popupMinimized), tr(popupMinimized ? 'maximizeTitle' : 'minimizeTitle'),
+		var min = toolbarButton(viewIcon(popupMinimized), keyTitle(popupMinimized ? 'maximizeTitle' : 'minimizeTitle', 'view'),
 			minimizeButton, 'emlIcon');
 		min.setAttribute('data-icon', popupMinimized ? 'maximize' : 'minimize');
 		min.id = 'emlMin';
 		bar.appendChild(min);
-		var close = iconButton('close', tr('closeTitle'), closeButton, 'emlIcon');
+		var close = iconButton('close', keyTitle('closeTitle', 'close'), closeButton, 'emlIcon');
 		close.id = 'emlClose';
 		bar.appendChild(close);
 	}
 }
 
 /**
-* A button of a toolbar showing an icon (ICONS), named by its attribute data-icon
-* @param icon the name of the icon
+* The class of a control not shown in its toolbar (SF-2.14), from its choice: shown, or not (in the menu, or not shown)
+*/
+function offClass(choice) {
+	return (choice == 'shown') ? '' : ' emlOff';
+}
+
+/**
+* A control of the top toolbar put in the menu by the settings: the menu button then takes the place of the buttons at the
+* top right (SF-2.14)
+*/
+function toolbarsMenuChosen() {
+	return toolbars.buttonsTop == 'menu' || toolbars.editTop == 'menu' || toolbars.exportTop == 'menu' || toolbars.serverTop == 'menu'
+		|| toolbars.categoryTop == 'menu';
+}
+
+/**
+* A button of a toolbar showing an icon (icon()), named by its attribute data-icon
+* @param name the name of the icon
 * @param title its tooltip: what it does, and its shortcut
 * @param action the function called by a click
 * @param classes its classes
 */
-function iconButton(icon, title, action, classes) {
-	var button = toolbarButton(ICONS[icon], title, action, classes);
-	button.setAttribute('data-icon', icon);
+function iconButton(name, title, action, classes) {
+	var button = toolbarButton(icon(name), title, action, classes);
+	button.setAttribute('data-icon', name);
 	return button;
 }
 
@@ -2305,7 +3466,7 @@ function categoryTitle(selection) {
 }
 
 /**
-* The drop-down list of the servers of a toolbar (I-6): "srv" at the top, "srv2" at the bottom; both
+* The drop-down list of the servers of a toolbar (SF-6.11): "srv" at the top, "srv2" at the bottom; both
 * show the same server (changeServer()). Grayed out while a sending waits for its answer (setSending()).
 * @param pos 0 for the top toolbar, 1 for the bottom one
 */
@@ -2351,7 +3512,6 @@ function addEditBox(container, txt) {
 	tmp_link.cols = editCol;
 	tmp_link.rows = editRow;
 	tmp_link.value = txt;
-	tmp_link.style.fontSize='11px';
 	tmp_link.style.width='100%';
 	tmp_link.style.height='100%';
 	// the counters follow the links of the text
@@ -2394,8 +3554,7 @@ function editButton() {
 			break;
 
 		default:
-			trace("ERROR: popupMode=" + popupMode);
-			alert("Error !!! popupMode unknown.");
+			internalError('popupMode=' + popupMode);
 			return;
 	}
 }
@@ -2411,8 +3570,8 @@ function setButton() {
 }
 
 /**
-* Actions when the popup is closed by the user: its Close button, Ctrl+Alt+C, the menu "Close Popup".
-* A message then tells how to open it again (I-3), unless the setting closeMessage is unchecked; none
+* Actions when the popup is closed by the user: its Close button, the menu of the top toolbar.
+* A message then tells how to open it again (SF-10.4), unless the setting closeMessage is unchecked; none
 * when no popup was open.
 */
 function closeButton() {
@@ -2423,7 +3582,7 @@ function closeButton() {
 }
 
 /**
-* Close the popup, without any message: Ctrl+Alt+X goes through the views with it (cycleView())
+* Close the popup, without any message: Ctrl+Alt+W goes through the views with it (cycleView())
 * @return true when a popup was open
 */
 function closePopup() {
@@ -2436,7 +3595,7 @@ function closePopup() {
 }
 
 /**
-* The message shown when the popup is closed (I-3): a box inside the page, not an alert, centered in the
+* The message shown when the popup is closed (SF-10.4): a box inside the page, not an alert, centered in the
 * window on a backdrop, as the settings dialog, so that it cannot be missed, telling how to open it again, and how to keep it closed (the default view, or the script
 * restricted to some sites, step 7 of the installation guide of the README). OK, its Close button or
 * Escape close it, and so does the popup opened again; its box "Don't display again" then unchecks the
@@ -2446,14 +3605,15 @@ function showCloseMessage() {
 	var manager = (typeof GM_info != 'undefined' && GM_info.scriptHandler) ? GM_info.scriptHandler : tr('userscriptManager');
 	var box = document.createElement('div');
 	var backdrop = document.createElement('div');
+	applyTheme();
 
 	trace('showCloseMessage()');
 	delCloseMessage();
 	backdrop.id = 'emlMsgBackdrop';		// the page cannot be clicked behind the message, nor does a click close it
 	box.id = 'emlMsg';
-	box.innerHTML = '<style>' + MESSAGE_CSS + '</style>'	// the look of the message, in the PARAM block
+	box.innerHTML = '<style>' + scaledCss(MESSAGE_CSS) + '</style>'	// the look of the message, in the PARAM block
 		+ '<div class="emlMsgBar"><span class="emlMsgTitle">' + tr('closedTitle') + '</span></div>'
-		+ '<div class="emlMsgText">' + tr('closedText', {manager: '<span class="emlMsgManager"></span>',
+		+ '<div class="emlMsgText">' + tr('closedText', {keys: closedKeys(), manager: '<span class="emlMsgManager"></span>',
 			link: '<a target="_blank" rel="noopener">', end: '</a>'}) + '</div>'
 		+ '<div class="emlMsgBar bottom"><label><input type="checkbox" id="emlMsgOff">' + tr('dontDisplay') + '</label></div>';
 	box.querySelector('.emlMsgManager').textContent = manager;
@@ -2507,7 +3667,7 @@ function closeMessageOnEscape(e) {
 }
 
 /**
-* Actions when the help is asked: the ? button, Ctrl+Alt+H, the menu "Help" (I-5). It shows the help, or
+* Actions when the help is asked: the ? button, Ctrl+Alt+H, the menu "Help" (SF-11). It shows the help, or
 * closes it when it is shown; nothing on a page without ed2k links, as the other commands of the popup.
 */
 function helpButton() {
@@ -2521,7 +3681,7 @@ function helpButton() {
 }
 
 /**
-* The help built into the script (I-5): a box inside the page, without backdrop, so that the popup it
+* The help built into the script (SF-11): a box inside the page, without backdrop, so that the popup it
 * explains stays in view and usable, beside it (placeHelp()). It draws each control of the toolbars, with
 * what it does and its shortcut, and links to the documentation and to the issues on GitHub, in a new tab.
 * OK, its Close button, Escape, the ? button or Ctrl+Alt+H close it.
@@ -2530,23 +3690,27 @@ function showHelp() {
 	var manager = (typeof GM_info != 'undefined' && GM_info.scriptHandler) ? GM_info.scriptHandler : tr('userscriptManager');
 	var box = document.createElement('div');
 	var chip = function (html, classes) { return '<span class="emlChip ' + (classes || '') + '">' + html + '</span>'; };
+	applyTheme();
 	// each control of the toolbars, drawn: what it does, its shortcut
 	var rows = [
-		[chip('<input type="checkbox" checked tabindex="-1">', 'icon'), tr('helpCheckAll'), 'Ctrl+Alt+A'],
+		[chip('<input type="checkbox" checked tabindex="-1">', 'icon'), tr('helpCheckAll'), shortcutText('checkAll')],
 		[chip('9<span>/9</span>', 'count'), tr('helpCount'), ''],
 		[chip(tr('helpServerChip')), tr('helpServer'), ''],
 		[chip(tr('helpCategoryChip')), tr('helpCategory'), ''],
-		[chip(trPlain('download'), 'add'), tr('helpDownload'), 'Ctrl+Alt+D'],
-		[chip(trPlain('editMode')), tr('helpEditMode'), 'Ctrl+Alt+M'],
-		[chip(ICONS.settings, 'icon'), tr('helpSettings'), 'Ctrl+Alt+S'],
-		[chip(ICONS.help, 'icon'), tr('helpHelp'), 'Ctrl+Alt+H'],
-		[chip(viewIcon(false), 'icon min') + ' ' + chip(viewIcon(true), 'icon min'), tr('helpView'), 'Ctrl+Alt+X'],
-		[chip(ICONS.close, 'icon close'), tr('helpClose'), 'Ctrl+Alt+C']
+		[chip(tr('download'), 'add'), tr('helpDownload'), shortcutText('download')],
+		[chip(tr('editMode')), tr('helpEditMode'), shortcutText('editMode')],
+		[chip(tr('export')), tr('helpExport'), shortcutText('export') || shortcutText('copy')],	// Copy, its first command
+		[chip(icon('settings'), 'icon'), tr('helpSettings'), shortcutText('settings')],
+		[chip(icon('help'), 'icon'), tr('helpHelp'), shortcutText('help')],
+		[chip(viewIcon(false), 'icon min') + ' ' + chip(viewIcon(true), 'icon min'), tr('helpView'), shortcutText('view')],
+		[chip(icon('close'), 'icon close'), tr('helpClose') + (shortcuts.open ? tr('helpCloseKey', {key: shortcutText('open')}) : ''),
+			shortcutText('close')],
+		[chip(icon('menu'), 'icon'), tr('helpMenu'), '']
 	];
 
 	trace('showHelp()');
 	box.id = 'emlHelp';
-	box.innerHTML = '<style>' + HELP_CSS + '</style>'	// the look of the help, in the PARAM block
+	box.innerHTML = '<style>' + scaledCss(HELP_CSS) + '</style>'	// the look of the help, in the PARAM block
 		+ '<div class="emlHelpBar emlHelpHead"><span class="emlHelpTitle"></span></div>'
 		+ '<div class="emlHelpBody">'
 		+ '<p>' + tr('helpIntro') + '</p>'
@@ -2675,7 +3839,7 @@ function helpOnEscape(e) {
 }
 
 /**
-* Actions when the popup is opened: Ctrl+Alt+O, Ctrl+Alt+X when closed, menu "Open Popup"
+* Actions when the popup is opened: Ctrl+Alt+O, Ctrl+Alt+W when closed, menu "Open Popup"
 * There is always one popup at most: an open popup is left as it is (its selection and
 * its edit box are kept), maximized if it was minimized, and nothing is opened on a page
 * without ed2k links (SF-1.12).
@@ -2698,7 +3862,7 @@ function openButton() {
 }
 
 /**
-* Actions when the minimize / maximize button of the popup is pressed (I-2)
+* Actions when the minimize / maximize button of the popup is pressed (SF-2.12)
 */
 function minimizeButton() {
 	trace("minimizeButton()");
@@ -2742,13 +3906,13 @@ function setMinimized(on) {
 	}
 	button.innerHTML = viewIcon(on);
 	button.setAttribute('data-icon', on ? 'maximize' : 'minimize');
-	button.title = tr(on ? 'maximizeTitle' : 'minimizeTitle');
+	button.title = keyTitle(on ? 'maximizeTitle' : 'minimizeTitle', 'view');
 	popupMinimized = on;
 	placeStatus();	// the band of an answer: in the popup, or floating against it
 }
 
 /**
-* Ctrl+Alt+X, menu "Switch view": maximized, minimized, closed, in turn (I-2)
+* Ctrl+Alt+W: maximized, minimized, closed, in turn (SF-10)
 */
 function cycleView() {
 	trace("cycleView()");
@@ -2764,7 +3928,7 @@ function cycleView() {
 }
 
 /**
-* Ctrl+Alt+A, menu "Check or uncheck all links": as a click on the box of the top toolbar; nothing
+* Ctrl+Alt+A: as a click on the box of the top toolbar; nothing
 * when there is no box to click (popup closed, edit mode)
 */
 function checkAllButton() {
@@ -2853,7 +4017,7 @@ function changeCat(cat) {
 }
 
 /**
-* Actions when the server is changed (I-6): the server chosen receives the links of this page, with its
+* Actions when the server is changed (SF-6.12): the server chosen receives the links of this page, with its
 * own settings (useServer()); the category lists offer its categories, from its default one. Not stored,
 * as the category (SF-6.9): the next page starts on the server checked in the settings.
 * @param list the server list changed
@@ -2880,6 +4044,16 @@ function changeServer(list) {
 		fresh.className = cats[c].className;
 		cats[c].parentNode.replaceChild(fresh, cats[c]);
 	}
+	adaptToolbars();	// its categories may need another width
+}
+
+/**
+* An error that should never happen: traced, and told in the band, in red until closed, rather than in an alert
+* @param what what was wrong, as it can be reported: popupMode=3
+*/
+function internalError(what) {
+	trace('ERROR: ' + what);
+	showStatus(tr('internalError', {what: what}), false);
 }
 
 /**
@@ -2889,11 +4063,11 @@ function changeServer(list) {
 function debugButton() {
 	DEBUG_MODE = DEBUG_MODE ? 0 : 1;
 	GM_setValue('debug_mode', DEBUG_MODE);
-	alert(tr(DEBUG_MODE ? 'debugOn' : 'debugOff'));
+	showStatus(tr(DEBUG_MODE ? 'debugOn' : 'debugOff'), true);	// in the band, a success
 }
 
 // -------------------------------------------------------------------------
-// Selection: the links checked, the server and the category chosen (SF-5, SF-6, I-6)
+// Selection: the links checked, the server and the category chosen (SF-5, SF-6)
 // -------------------------------------------------------------------------
 
 /**
@@ -2977,7 +4151,7 @@ function getSelectedCat() {
 }
 
 /**
-* The servers that the popup offers (I-6), in pageServers: Local (unless disabled, I-14), then the servers
+* The servers that the popup offers (SF-6.11), in pageServers: Local (unless disabled, SF-8.20), then the servers
 * stored by the settings dialog, in their order, the one checked in the settings chosen. Only its settings
 * are kept: the others have their name and method only, their settings (their password included) being read
 * when one is chosen (useServer()), so that they leave the storage only on an action of the user. This one takes its method and its
@@ -2998,7 +4172,7 @@ function readServers() {
 	catch (e) {
 		trace('readServers() servers ignored: ' + e);
 	}
-	// Local, unless disabled in the settings (I-14), when another server receives the links
+	// Local, unless disabled in the settings (SF-8.20), when another server receives the links
 	pageServers = (saved.localDisabled && ed2kDlMethod != 'local') ? [] : [pageServerOf({id: 'local', name: tr('local'), method: 'local'})];
 	pageServer = 'local';
 	for (var i=0; i<(saved.list || []).length; i++) {
@@ -3135,7 +4309,7 @@ function clickOneLink(e) {
 }
 
 /**
-* Actions when the Download button is pressed (Ctrl+Alt+D, menu "Download")
+* Actions when the Download button is pressed (Ctrl+Alt+D)
 */
 function addButton() {
 	trace("addButton()");
@@ -3158,8 +4332,7 @@ function addButton() {
 			}
 			break;
 		default:
-			trace("ERROR: popupMode=" + popupMode);
-			alert("Error !!! popupMode unknown.");
+			internalError('popupMode=' + popupMode);
 			return;
 	}
 
@@ -3741,6 +4914,7 @@ function showStatus(msg, ok) {
 	var container = document.getElementById('theDiv');
 	var line = document.getElementById('emlStatus');
 	var kind = (ok == null) ? 'wait' : (ok === 'doubt') ? 'doubt' : ok ? 'ok' : 'ko';
+	applyTheme();
 	var text;
 	var dots = 0;
 
@@ -3749,7 +4923,7 @@ function showStatus(msg, ok) {
 	if (document.getElementById('emlStatusCss') == null) {
 		var css = document.createElement('style');
 		css.id = 'emlStatusCss';
-		css.textContent = STATUS_CSS;
+		css.textContent = scaledCss(STATUS_CSS);
 		(document.head || document.body).appendChild(css);
 	}
 	if (statusTimer != null) {
@@ -3771,9 +4945,8 @@ function showStatus(msg, ok) {
 		(container || document.body).appendChild(line);	// moved by placeStatus() when needed
 		window.addEventListener('resize', placeStatus, false);
 	}
-	line.className = kind;
-	line.style.color = (kind == 'wait') ? '#555' : (kind == 'doubt') ? '#a65f00' : (kind == 'ok') ? '#060' : '#c00';
-	line.querySelector('.emlStatusIcon').innerHTML = (kind == 'wait') ? '' : ICONS[kind == 'ok' ? 'ok' : 'warn'];
+	line.className = kind;	// its colors, in STATUS_CSS
+	line.querySelector('.emlStatusIcon').innerHTML = (kind == 'wait') ? '' : icon(kind == 'ok' ? 'ok' : 'warn');
 	text = line.querySelector('.emlStatusText');
 	text.textContent = msg;
 	// the three dots of the waiting only, none in an answer
@@ -3871,6 +5044,272 @@ function delStatus() {
 }
 
 // -------------------------------------------------------------------------
+// Export: the links copied, or saved as an eMule collection, a CSV or a text file (SF-14)
+// -------------------------------------------------------------------------
+
+// the formats of the export, in the order of its menu: the name of the command, the extension and the type of its file
+var EXPORT_FORMATS = [['copy', '', ''], ['collection', '.emulecollection', 'application/octet-stream'],
+	['csv', '.csv', 'text/csv;charset=utf-8'], ['text', '.txt', 'text/plain;charset=utf-8']];
+
+/**
+* The button Export, or its keyboard shortcut (button null): opens its menu, or closes it when open. Without a button shown, the
+* menu opens under the top toolbar, at its right; the popup closed, nothing happens.
+*/
+function toggleExportMenu(button) {
+	var menu = document.getElementById('emlMenu');
+	var keyboard = (button == null);
+
+	if (menu && menu.getAttribute('data-for') == 'export') {
+		closeToolbarMenu();
+		return;
+	}
+	if (document.getElementById('theDiv') == null) {
+		return;
+	}
+	closeToolbarMenu();
+	if (button == null || !button.getClientRects().length || getComputedStyle(button).display == 'none') {
+		button = ['emlExport', 'emlExportTop'].map(function (id) { return document.getElementById(id); }).filter(function (b) {
+			return b && b.getClientRects().length > 0;
+		})[0] || null;
+	}
+	trace('toggleExportMenu() ' + (button ? button.id : 'at the corner of the popup'));
+	applyTheme();
+	menu = newMenu('export');
+	exportCommands(menu);
+	showMenu(menu, button, true);
+	if (keyboard) {
+		menu.querySelector('button').focus({ preventScroll: true });	// Enter copies, Tab goes to the next format
+	}
+}
+
+/**
+* The commands of the export, in a menu: Copy, eMule collection, CSV, Text
+*/
+function exportCommands(menu) {
+	EXPORT_FORMATS.forEach(function (f) {
+		menuCommand(menu, '', tr('export.' + f[0]), (f[0] == 'copy') ? shortcutText('copy') : '', function () { exportLinks(f[0]); }, 'export-' + f[0]);
+	});
+}
+
+/**
+* Ctrl+Alt+C: the links copied, those that Download would send, the popup closed too (SF-5.5); nothing on a page without
+* ed2k links, where the shortcut must not show a band
+*/
+function copyShortcut() {
+	if (eLinks.length == 0) {
+		trace('copyShortcut() no ed2k link on the page');
+		return;
+	}
+	exportLinks('copy');
+}
+
+/**
+* Export the links: the checked ones, or those of the edit box in edit mode, as Download sends them; copied, or saved as a
+* file in the downloads folder, named after the page (exportFileName()). The answer in the band.
+* @param format copy, collection, csv or text
+*/
+function exportLinks(format) {
+	var links = exportedLinks();
+	var f = EXPORT_FORMATS.filter(function (e) { return e[0] == format; })[0];
+
+	trace('exportLinks(' + format + ') ' + links.length + ' link(s)');
+	if (format == 'collection') {
+		links = links.filter(function (l) { return linkInfo(l) != null; });	// a collection holds files only
+	}
+	if (links.length == 0) {
+		showStatus(tr('exportNone'), 'doubt');
+		return;
+	}
+	if (format == 'copy') {
+		copyText(links.join('\n'), function (ok) {
+			showStatus(ok ? tr('exportCopied', {count: links.length}) : tr('exportCopyFailed'), ok);
+		});
+		return;
+	}
+	var data = (format == 'collection') ? emuleCollection(pageTitle(), links.map(linkInfo))
+		: (format == 'csv') ? exportCsv(links) : links.join('\r\n') + '\r\n';
+	saveFile(exportFileName() + f[1], f[2], data);
+	showStatus(tr('exportSaved', {count: links.length, format: tr('format.' + format)}), true);
+}
+
+/**
+* The links that the export takes: the checked ones; in edit mode, the lines of the edit box that are ed2k links
+*/
+function exportedLinks() {
+	var box = document.getElementById('editbox');
+	if (popupMode == 2 && box != null) {
+		return box.value.split('\n').map(function (l) { return l.trim(); }).filter(function (l) { return /^ed2k:\/\//i.test(l); });
+	}
+	return getSelectLink(eLinks);
+}
+
+/**
+* What an ed2k link of a file tells: its name (decoded), its size, its hash (MD4, hex) and its AICH hash (base32, or '');
+* null for a link that is not a file with a hash
+*/
+function linkInfo(link) {
+	var parts = link.split('|');
+	var name;
+
+	if (!isValidEd2kFile(parts) || !/^[0-9a-f]{32}$/i.test(parts[4])) {
+		return null;
+	}
+	name = parts[2];
+	if (/%[0-9A-Fa-f]{2}/.test(name)) {
+		try {
+			name = decodeURIComponent(name);
+		}
+		catch (e) {
+			trace('linkInfo() name left encoded: ' + name);
+		}
+	}
+	var aich = parts.filter(function (p) { return /^h=[A-Z2-7]+$/i.test(p); })[0];
+	return { name: name, size: Number(parts[3]), hash: parts[4].toLowerCase(), aich: aich ? aich.substring(2).toUpperCase() : '' };
+}
+
+/**
+* The CSV of the links (RFC 4180, UTF-8 with its BOM for Excel, lines ended by CRLF): Link, Name, Size (as in the list),
+* Referer (the page). A name that a spreadsheet would take for a formula (=, +, -, @) starts with an apostrophe.
+*/
+function exportCsv(links) {
+	var field = function (v) {
+		v = String(v);
+		return /[",\r\n]/.test(v) || v != v.trim() ? '"' + v.replace(/"/g, '""') + '"' : v;
+	};
+	var rows = [['Link', 'Name', 'Size', 'Referer']].concat(links.map(function (l) {
+		var info = linkInfo(l) || { name: '', size: null };
+		var name = /^[=+\-@\t\r]/.test(info.name) ? "'" + info.name : info.name;
+		return [l, name, info.size == null ? '' : humanFileSize(info.size, false, 0), location.href];
+	}));
+	return '\ufeff' + rows.map(function (r) { return r.map(field).join(','); }).join('\r\n') + '\r\n';
+}
+
+/**
+* An eMule collection (.emulecollection), binary, unsigned, as eMule writes it (Collection.cpp, CollectionFile.cpp): its
+* version (1, or 2 when a file exceeds 4 290 048 000 bytes), one header tag (its name), the number of files, then each
+* file as its tags: hash, size, name, AICH hash when the link has one. Little-endian; tags with a one-byte id (0x80),
+* integers in the smallest type, strings in UTF-8 (STR1 to STR16 up to 16 bytes).
+* @param name the name of the collection
+* @param files linkInfo() of each file
+* @return the bytes (Uint8Array)
+*/
+function emuleCollection(name, files) {
+	var bytes = [];
+	var uint = function (value, size) {
+		for (var i=0; i<size; i++) {
+			bytes.push(Math.floor(value / Math.pow(256, i)) % 256);
+		}
+	};
+	var stringTag = function (id, text) {
+		var utf8 = Array.from(new TextEncoder().encode(text)).slice(0, 65535);
+		if (utf8.length >= 1 && utf8.length <= 16) {
+			bytes.push(0x80 | (0x11 + utf8.length - 1), id);	// TAGTYPE_STR1 to TAGTYPE_STR16
+		}
+		else {
+			bytes.push(0x80 | 0x02, id);	// TAGTYPE_STRING, its length
+			uint(utf8.length, 2);
+		}
+		bytes.push.apply(bytes, utf8);
+	};
+	var intTag = function (id, value) {
+		var type = (value <= 0xFF) ? [0x09, 1] : (value <= 0xFFFF) ? [0x08, 2] : (value <= 0xFFFFFFFF) ? [0x03, 4] : [0x0B, 8];
+		bytes.push(0x80 | type[0], id);	// TAGTYPE_UINT8, UINT16, UINT32, UINT64
+		uint(value, type[1]);
+	};
+
+	uint(files.some(function (f) { return f.size > 4290048000; }) ? 2 : 1, 4);
+	uint(1, 4);	// the header tags: the name only (no author, not signed)
+	stringTag(0x01, name);	// FT_FILENAME
+	uint(files.length, 4);
+	files.forEach(function (f) {
+		uint(f.aich ? 4 : 3, 4);
+		bytes.push(0x80 | 0x01, 0x28);	// TAGTYPE_HASH, FT_FILEHASH
+		for (var i=0; i<32; i+=2) {
+			bytes.push(parseInt(f.hash.substr(i, 2), 16));
+		}
+		intTag(0x02, f.size);	// FT_FILESIZE
+		stringTag(0x01, f.name);	// FT_FILENAME
+		if (f.aich) {
+			stringTag(0x27, f.aich);	// FT_AICH_HASH
+		}
+	});
+	return new Uint8Array(bytes);
+}
+
+/**
+* The title of the page, or its host when it has none: the name of a collection
+*/
+function pageTitle() {
+	return document.title.replace(/\s+/g, ' ').trim() || location.hostname || 'ed2k links';
+}
+
+/**
+* The name of an exported file, without its extension: <title of the page> <YYYY-MM-DD>, without the characters that
+* Windows refuses, 100 characters at most
+*/
+function exportFileName() {
+	var d = new Date();
+	var date = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+	var title = pageTitle().replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 100).replace(/[. ]+$/, '');
+	return (title || 'ed2k links') + ' ' + date;
+}
+
+/**
+* Save a file in the downloads folder: a link of the page to its data, clicked
+*/
+function saveFile(name, type, data) {
+	var url = URL.createObjectURL(new Blob([data], { type: type }));
+	var link = document.createElement('a');
+
+	link.href = url;
+	link.download = name;
+	link.style.display = 'none';
+	document.body.appendChild(link);
+	link.click();
+	link.parentNode.removeChild(link);
+	setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+}
+
+/**
+* Copy a text: by the clipboard of the browser (a secure page, https), or else by a hidden text selected and copied
+* @param done called with true once copied, false when the browser refused
+*/
+function copyText(text, done) {
+	if (navigator.clipboard && navigator.clipboard.writeText && window.isSecureContext) {
+		navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(copyBySelection(text)); });
+	}
+	else {
+		done(copyBySelection(text));
+	}
+}
+
+/**
+* Copy a text by the command copy of the page, on a hidden text selected; the focus given back
+*/
+function copyBySelection(text) {
+	var area = document.createElement('textarea');
+	var focus = document.activeElement;
+	var ok = false;
+
+	area.value = text;
+	area.setAttribute('readonly', '');
+	area.style.cssText = 'position: fixed; top: 0; left: 0; width: 1px; height: 1px; opacity: 0;';
+	document.body.appendChild(area);
+	area.select();
+	try {
+		ok = document.execCommand('copy');
+	}
+	catch (e) {
+		trace('copyBySelection() refused: ' + e);
+	}
+	area.parentNode.removeChild(area);
+	if (focus && focus.focus) {
+		focus.focus({ preventScroll: true });
+	}
+	return ok;
+}
+
+// -------------------------------------------------------------------------
 // Settings: the settings read and saved, the settings dialog and its servers (SF-8)
 // -------------------------------------------------------------------------
 
@@ -3897,24 +5336,47 @@ function scriptConfig() {
 	GM_config.init(configDiv, settingsTitle(), SETTINGS_CSS, {
 		'section0' : { section: [tr('section0'), tr('section0Help')], label: '', type: 'hidden'},
 		'language': { label: tr('languageLabel'), title : tr('languageHelp'), type: 'select', options:{'browser':tr('language.browser'),'en':tr('language.en'),'fr':tr('language.fr')}, default: language },
-		'popupView': { label: tr('popupViewLabel'), title : tr('popupViewHelp'), type: 'select', options:{'maximized':tr('popupView.maximized'),'minimized':tr('popupView.minimized'),'closed':tr('popupView.closed')}, default: popupView },
-		'closeMessage': { label: tr('closeMessageLabel'), title : tr('closeMessageHelp'), type: 'checkbox', default: closeMessage },
+		'theme': { label: tr('themeLabel'), title : tr('themeHelp'), type: 'select', options: themeOptions(), default: theme },
+		'textSize': { label: tr('textSizeLabel'), title : tr('textSizeHelp', {min: SIZE_MIN, max: SIZE_MAX}), type: 'int', default: textSize },
+		'popupView': { label: tr('popupViewLabel'), title : popupViewHelp(), type: 'select', options:{'maximized':tr('popupView.maximized'),'minimized':tr('popupView.minimized'),'closed':tr('popupView.closed')}, default: popupView },
 		'section1' : { section: [tr('section1'), tr('section1Help')], label: '', type: 'hidden'},
 		'ed2kDlMethod': { label: tr('ed2kDlMethodLabel'), title : tr('ed2kDlMethodHelp'), type:'select', options:{'local':tr('ed2kDlMethod.local'),'emule':tr('ed2kDlMethod.emule'),'amuleapi':tr('ed2kDlMethod.amuleapi'),'amule':tr('ed2kDlMethod.amule'),'mldonkey':tr('ed2kDlMethod.mldonkey'),'custom':tr('ed2kDlMethod.custom')}, default: ed2kDlMethod}, // default value doesn't work with a dropdown menu => see bugfix in the lib
 		'emuleUrl': { label: tr('emuleUrlLabel'), title : tr('emuleUrlHelp'), type: 'text', size: 32, default: emuleUrl },
 		'emuleUser': { label: tr('emuleUserLabel'), title : tr('emuleUserHelp'), type: 'text', size: 20, default: emuleUser },
 		'emulePwd': { label: tr('emulePwdLabel'), title : tr('emulePwdHelp'), type: 'text', size: 20, default: emulePwd },
 		'emuleCat': { label: tr('emuleCatLabel'), title : tr('emuleCatHelp'), type: 'text', size: 40, default: catToStr(emuleCat) },
+		'sectionKeys' : { section: [tr('sectionKeys'), tr('sectionKeysHelp')], label: '', type: 'hidden'},
+		'keyCheckAll': shortcutField('checkAll'),
+		'keyDownload': shortcutField('download'),
+		'keyCopy': shortcutField('copy'),
+		'keyExport': shortcutField('export'),
+		'keyEditMode': shortcutField('editMode'),
+		'keySettings': shortcutField('settings'),
+		'keyHelp': shortcutField('help'),
+		'keyView': shortcutField('view'),
+		'keyClose': shortcutField('close'),
+		'keyOpen': shortcutField('open'),
+		'keyDebug': shortcutField('debug'),
+		'sectionToolbars' : { section: [tr('sectionToolbars'), tr('sectionToolbarsHelp')], label: '', type: 'hidden'},
+		'tbEditTop': toolbarField('tbEditTop'),
+		'tbEditBottom': toolbarField('tbEditBottom'),
+		'tbExportTop': toolbarField('tbExportTop'),
+		'tbExportBottom': toolbarField('tbExportBottom'),
+		'tbServerTop': toolbarField('tbServerTop'),
+		'tbServerBottom': toolbarField('tbServerBottom'),
+		'tbCategoryTop': toolbarField('tbCategoryTop'),
+		'tbCategoryBottom': toolbarField('tbCategoryBottom'),
+		'tbDownloadBottom': toolbarField('tbDownloadBottom'),
+		'tbButtonsTop': toolbarField('tbButtonsTop'),
 		'section2' : { section: [tr('section2'), tr('section2Help')], label: '', type: 'hidden'},
-		'showCategories': { label: tr('showCategoriesLabel'), title : tr('showCategoriesHelp'), type: 'checkbox', default: showCategories },
-		'showServerList': { label: tr('showServerListLabel'), title : tr('showServerListHelp'), type: 'checkbox', default: showServerList },
 		'popupCorner': { label: tr('popupCornerLabel'), title : tr('popupCornerHelp'), type: 'select', options:{'top-left':tr('popupCorner.top-left'),'top-right':tr('popupCorner.top-right'),'bottom-left':tr('popupCorner.bottom-left'),'bottom-right':tr('popupCorner.bottom-right')}, default: popupCorner },
 		'popupScroll': { label: tr('popupScrollLabel'), title : tr('popupScrollHelp'), type: 'select', options:{'floating':tr('popupScroll.floating'),'static':tr('popupScroll.static')}, default: popupScroll },
-		'popupHeight': { label: tr('popupHeightLabel'), title : tr('popupHeightHelp'), type: 'int', size: 6, default: popupHeight },
-		'popupWidth': { label: tr('popupWidthLabel'), title : tr('popupWidthHelp'), type: 'int', size: 6, default: popupWidth },
+		'closeMessage': { label: tr('closeMessageLabel'), title : tr('closeMessageHelp'), type: 'checkbox', default: closeMessage },
+		'popupRows': { label: tr('popupRowsLabel'), title : tr('popupRowsHelp'), type: 'int', size: 6, default: popupRows },
+		'popupCols': { label: tr('popupColsLabel'), title : tr('popupColsHelp', {min: POPUP_COLS_MIN}), type: 'int', size: 6, default: popupCols },
 		'checkFilter': { label: tr('checkFilterLabel'), title : tr('checkFilterHelp'), type: 'text', size: 40, default: checkFilter },
 		'section3' : { section: [tr('section3'), tr('section3Help')], label: '', type: 'hidden'},
-		'editCol': { label: tr('editColLabel'), title : tr('editColHelp'), type: 'int', size: 4, default: editCol },
+		'editCol': { label: tr('editColLabel'), title : tr('editColHelp', {min: EDIT_COLS_MIN}), type: 'int', size: 4, default: editCol },
 		'editRow': { label: tr('editRowLabel'), title : tr('editRowHelp'), type: 'int', size: 4, default: editRow },
 	},
 	{
@@ -3949,21 +5411,32 @@ function settingsTitle() {
 
 /**
 * Write the help of a field: the text between backquotes is code (an address, a value, a regular
-* expression), shown in a monospace font. The tooltip of a row, its textContent, has no backquote.
+* expression), shown in a monospace font; [text](#anchor) is a link to that section of the README of the
+* repository ([text](address) to another page), opened in a new tab. The tooltip of a row, its textContent,
+* has no backquote and no address.
 * @param help the element of the help
-* @param text the help, its code between backquotes
+* @param text the help, its code between backquotes, its links
 */
 function setHelpText(help, text) {
-	var parts = String(text).split('`');
+	var parts = String(text).split(/(`[^`]*`|\[[^\]]*\]\([^)]*\))/);	// the code and the links at the odd places
 	help.textContent = '';
 	for (var i=0; i<parts.length; i++) {
-		if (i % 2 == 1) {
-			var code = document.createElement('code');
-			code.textContent = parts[i];
-			help.appendChild(code);
+		var link = /^\[([^\]]*)\]\(([^)]*)\)$/.exec(parts[i]);
+		if (i % 2 == 0) {
+			help.appendChild(document.createTextNode(parts[i]));
+		}
+		else if (link) {
+			var a = document.createElement('a');
+			a.textContent = link[1];
+			a.href = (link[2].charAt(0) == '#' ? REPOSITORY : '') + link[2];
+			a.target = '_blank';
+			a.rel = 'noopener';
+			help.appendChild(a);
 		}
 		else {
-			help.appendChild(document.createTextNode(parts[i]));
+			var code = document.createElement('code');
+			code.textContent = parts[i].slice(1, -1);
+			help.appendChild(code);
 		}
 	}
 }
@@ -3975,6 +5448,7 @@ function setHelpText(help, text) {
 */
 function settingsDialogOpened() {
 	var root = document.getElementById('GM_config');
+	applyTheme();
 	var rows = root.querySelectorAll('.config_var');
 	var pwd = document.getElementById('GM_config_field_emulePwd');
 	var reveal;
@@ -3996,6 +5470,10 @@ function settingsDialogOpened() {
 			row.appendChild(help);
 		}
 	}
+
+	setupToolbarsTable();	// the choices of the toolbars, as a table (SF-2.14)
+	setupShortcutsTable();	// the letters of the keyboard shortcuts, as a table (SF-9)
+	setupSizeSlider();	// Size, as a slider (SF-2.5)
 
 	// the password is masked, a button shows it
 	pwd.type = 'password';
@@ -4034,9 +5512,10 @@ function settingsDialogOpened() {
 			return;
 		}
 		prepareServersForSaving();
+		restoreToolbarButtons();
 	}, true);
 
-	// the buttons of GM_config, in the language of the script (I-7)
+	// the buttons of GM_config, in the language of the script (SF-12)
 	document.getElementById('GM_config_saveBtn').textContent = tr('save');
 	document.getElementById('GM_config_saveBtn').title = tr('saveTitle');
 	document.getElementById('GM_config_closeBtn').textContent = tr('close');
@@ -4056,14 +5535,16 @@ function settingsDialogOpened() {
 	if (!document.getElementById('GM_config_backdrop')) {
 		var backdrop = document.createElement('div');
 		backdrop.id = 'GM_config_backdrop';
-		backdrop.setAttribute('style', 'position:fixed; top:0; left:0; right:0; bottom:0; z-index:998;'
-			+ ' background:rgba(0,0,0,.35);');
+		backdrop.setAttribute('style', 'position:fixed; top:0; left:0; right:0; bottom:0; z-index:998;');	// its color, in SETTINGS_CSS
 		document.body.appendChild(backdrop);
 	}
 	document.addEventListener('keydown', closeSettingsOnEscape, true);
 
 	// the links to the repository, at the bottom
 	addFooter();
+
+	// each section folded or unfolded as the user left it (SF-8)
+	setupSections();
 }
 
 /**
@@ -4185,7 +5666,7 @@ function setupServers() {
 	else {
 		dialogServers.active = null;
 	}
-	// Local can be disabled only when another server receives the links (I-14)
+	// Local can be disabled only when another server receives the links (SF-8.20)
 	dialogServers.localDisabled = !!dialogServers.localDisabled && dialogServers.active != null && dialogServers.list.length > 0;
 	dialogEdited = dialogServers.active;
 
@@ -4322,7 +5803,7 @@ function serverRow(server) {
 		acts.appendChild(del);
 	}
 	else if (dialogServers.list.length > 0) {
-		// Local: Disable, in the color of Delete, or Enable, in the color of Edit (I-14); not while it is checked
+		// Local: Disable, in the color of Delete, or Enable, in the color of Edit (SF-8.20); not while it is checked
 		var toggle = document.createElement('button');
 		toggle.type = 'button';
 		toggle.className = dialogServers.localDisabled ? 'enable' : 'del';
@@ -4467,7 +5948,7 @@ function chooseServer(id) {
 }
 
 /**
-* Disable Local, or enable it again (I-14): disabled, it can no longer be checked, and the popup neither
+* Disable Local, or enable it again (SF-8.20): disabled, it can no longer be checked, and the popup neither
 * offers nor counts it. Not while it is checked: the server that receives the links never changes without
 * the user. Saved with the servers.
 */
@@ -4537,7 +6018,7 @@ function deleteServer(id) {
 	clearSettingsMarks();
 	dialogServers.list = dialogServers.list.filter(function (srv) { return srv.id != id; });
 	if (dialogServers.list.length == 0) {
-		dialogServers.localDisabled = false;	// Local, the only choice left, enabled again (I-14)
+		dialogServers.localDisabled = false;	// Local, the only choice left, enabled again (SF-8.20)
 	}
 	if (dialogServers.active == id) {
 		// the checked server deleted: Local checked, or the first server left when Local is disabled
@@ -5245,7 +6726,7 @@ function addHelpButton() {
 	button.type = 'button';
 	button.id = 'GM_config_helpBtn';
 	button.className = 'helpbtn';
-	button.innerHTML = ICONS.help;
+	button.innerHTML = icon('help');
 	button.setAttribute('data-icon', 'help');
 	button.addEventListener('click', function () {
 		var on = !root.classList.contains('helps');
@@ -5258,7 +6739,7 @@ function addHelpButton() {
 	// the Close icon, at the right of the header: the same as the Close button, at the bottom
 	close.type = 'button';
 	close.id = 'GM_config_closeIcon';
-	close.innerHTML = ICONS.close;
+	close.innerHTML = icon('close');
 	close.setAttribute('data-icon', 'close');
 	close.title = tr('closeDialogTitle');
 	close.addEventListener('click', function () { document.getElementById('GM_config_closeBtn').click(); }, false);
@@ -5281,6 +6762,352 @@ function syncPopupScroll() {
 }
 
 /**
+* The choices of a field of the toolbars (SF-2.14): Shown, In the menu (the top toolbar), Not shown; the buttons at the top
+* right can not be not shown, the controls of the bottom toolbar can not be in the menu
+*/
+function toolbarChoices(id) {
+	var choices = {'shown': tr('tb.shown')};
+	if (/Top$/.test(id)) {
+		choices.menu = tr('tb.menu');
+	}
+	if (id != 'tbButtonsTop') {
+		choices.none = tr('tb.none');
+	}
+	return choices;
+}
+
+/**
+* The field of GM_config of a choice of the toolbars, shown in the table of the toolbars (setupToolbarsTable())
+*/
+function toolbarField(id) {
+	var row = TOOLBAR_ROWS.filter(function (r) { return r[1] == id || r[2] == id; })[0];
+	return { label: tr(row[0]) + ', ' + tr(/Top$/.test(id) ? 'toolbarTop' : 'toolbarBottom'), type: 'select', options: toolbarChoices(id),
+		default: TOOLBARS_DEFAULT[TOOLBAR_FIELDS[id]] };
+}
+
+/**
+* The choices of the toolbars as a table (SF-2.14), in place of their rows: a row per control, from left to right, a column
+* per toolbar; the lists of GM_config moved into its cells, which take the ids of their rows (the marks of Reset). Narrow,
+* the table is stacked (SETTINGS_CSS).
+*/
+function setupToolbarsTable() {
+	var first = document.getElementById('GM_config_tbEditTop_var');
+	var row = document.createElement('div');
+	var label = document.createElement('label');
+	var table = document.createElement('table');
+	var help = document.createElement('div');
+	var dash = String.fromCharCode(8212);
+
+	if (first == null) {
+		return;
+	}
+	row.className = 'config_var';
+	row.id = 'GM_config_toolbars_var';
+	label.className = 'field_label';
+	table.className = 'emlToolbars';
+	table.innerHTML = '<tr class="top"><td class="order"></td><td class="head"></td><td class="head"></td></tr>';
+	table.querySelector('.order').textContent = tr('toolbarsOrder');
+	table.querySelectorAll('.head')[0].textContent = tr('toolbarTop');
+	table.querySelectorAll('.head')[1].textContent = tr('toolbarBottom');
+	first.parentNode.insertBefore(row, first);
+	for (var r=0; r<TOOLBAR_ROWS.length; r++) {
+		var line = document.createElement('tr');
+		var name = document.createElement('th');
+		name.textContent = tr(TOOLBAR_ROWS[r][0]);
+		if (TOOLBAR_ROWS[r][0] == 'tbRowButtons') {
+			var sub = document.createElement('small');
+			sub.textContent = tr('tbRowButtonsSub');
+			name.appendChild(sub);
+		}
+		line.appendChild(name);
+		for (var c=1; c<=2; c++) {
+			var id = TOOLBAR_ROWS[r][c];
+			var cell = document.createElement('td');
+			var text = document.createElement('span');
+			cell.setAttribute('data-col', tr(c == 1 ? 'toolbarTop' : 'toolbarBottom'));
+			if (id === null) {
+				text.className = 'fixed';
+				text.textContent = tr('tb.always');
+				cell.appendChild(text);
+			}
+			else if (id === '') {
+				cell.className = 'empty';
+				text.className = 'none';
+				text.textContent = dash;
+				cell.appendChild(text);
+			}
+			else {
+				var old = document.getElementById('GM_config_' + id + '_var');
+				cell.appendChild(settingsField(id));
+				old.parentNode.removeChild(old);
+				cell.id = old.id;
+			}
+			line.appendChild(cell);
+		}
+		table.appendChild(line);
+	}
+	// the buttons at the top right in the menu, as soon as a control is there
+	var note = document.createElement('tr');
+	note.id = 'GM_config_tbForced';
+	note.innerHTML = '<td class="empty"></td><td class="note" colspan="2"></td>';
+	note.querySelector('.note').textContent = tr('tbForced');
+	table.appendChild(note);
+	help.className = 'help';
+	setHelpText(help, tr('toolbarsHelp'));
+	row.appendChild(label);
+	row.appendChild(table);
+	row.appendChild(help);
+	['tbEditTop', 'tbExportTop', 'tbServerTop', 'tbCategoryTop'].forEach(function (id) {
+		settingsField(id).addEventListener('change', syncToolbarButtons, false);
+	});
+	syncToolbarButtons();
+}
+
+/**
+* The field of GM_config of the letter of a keyboard shortcut (SF-9), shown in the table of the shortcuts: None, then A to Z
+*/
+function shortcutField(action) {
+	var options = {'': tr('keyNone')};
+	'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').forEach(function (letter) { options[letter] = letter; });
+	return { label: tr('key.' + action), type: 'select', options: options, default: SHORTCUTS_DEFAULT[action] || '' };
+}
+
+/**
+* The id of the field of the letter of an action: keyCheckAll for checkAll
+*/
+function shortcutId(action) {
+	return 'key' + action.charAt(0).toUpperCase() + action.slice(1);
+}
+
+/**
+* The letters of the keyboard shortcuts (SF-9), read from the settings: those of the PARAM block when not stored; a value
+* that is not a letter, or a letter already taken by an action before it, is no shortcut
+* @param stored the stored settings, by id
+*/
+function readShortcuts(stored) {
+	var chosen = {};
+	var used = {};
+
+	SHORTCUT_ORDER.forEach(function (action) {
+		var letter = stored[shortcutId(action)];
+		letter = String((letter === undefined || letter === null) ? (SHORTCUTS_DEFAULT[action] || '') : letter).toUpperCase();
+		if (!/^[A-Z]$/.test(letter) || used[letter]) {
+			letter = '';
+		}
+		used[letter] = !!letter;
+		chosen[action] = letter;
+	});
+	return chosen;
+}
+
+/**
+* The settings as stored by GM_config, read before it is set up (the letters of the shortcuts, which the menus and the
+* texts of its fields need); {} when they can not be read
+*/
+function storedSettings() {
+	try {
+		return JSON.parse(GM_getValue('GM_config', '{}') || '{}');
+	}
+	catch (e) {
+		trace('storedSettings() settings not read: ' + e);
+		return {};
+	}
+}
+
+/**
+* The letters of the keyboard shortcuts as a table (SF-9), in place of their rows: a row per action, its name, Ctrl+Alt+ and
+* its list (None, A to Z); the lists of GM_config moved into its cells, which take the ids of their rows (the marks of Reset,
+* the errors)
+*/
+function setupShortcutsTable() {
+	var first = document.getElementById('GM_config_' + shortcutId(SHORTCUT_ORDER[0]) + '_var');
+	var row = document.createElement('div');
+	var label = document.createElement('label');
+	var table = document.createElement('table');
+	var help = document.createElement('div');
+
+	if (first == null) {
+		return;
+	}
+	row.className = 'config_var';
+	row.id = 'GM_config_shortcuts_var';
+	label.className = 'field_label';
+	table.className = 'emlToolbars emlShortcuts';
+	first.parentNode.insertBefore(row, first);
+	SHORTCUT_ORDER.forEach(function (action) {
+		var id = shortcutId(action);
+		var old = document.getElementById('GM_config_' + id + '_var');
+		var line = document.createElement('tr');
+		var name = document.createElement('th');
+		var cell = document.createElement('td');
+		var mod = document.createElement('span');
+		name.textContent = tr('key.' + action);
+		mod.className = 'emlKeyMod';
+		mod.textContent = 'Ctrl+Alt+';
+		cell.appendChild(mod);
+		cell.appendChild(settingsField(id));
+		old.parentNode.removeChild(old);
+		cell.id = old.id;
+		line.appendChild(name);
+		line.appendChild(cell);
+		line.appendChild(document.createElement('td'));
+		table.appendChild(line);
+	});
+	help.className = 'help';
+	setHelpText(help, tr('keysHelp'));
+	row.appendChild(label);
+	row.appendChild(table);
+	row.appendChild(help);
+}
+
+/**
+* Size as a slider (SF-2.5): from SIZE_MIN to SIZE_MAX by steps of SIZE_STEP, the field of GM_config made a range, its value
+* at its right
+*/
+function setupSizeSlider() {
+	var field = settingsField('textSize');
+	var value = document.createElement('span');
+
+	if (field == null) {
+		return;
+	}
+	var size = field.value;	// kept: a range is 0 to 100 until its bounds are set
+	field.min = SIZE_MIN;
+	field.max = SIZE_MAX;
+	field.step = SIZE_STEP;
+	field.type = 'range';
+	field.value = size;
+	value.id = 'GM_config_textSizeValue';
+	value.className = 'emlSizeValue';
+	field.parentNode.insertBefore(value, field.nextSibling);
+	field.addEventListener('input', syncSizeValue, false);
+	field.addEventListener('change', syncSizeValue, false);
+	syncSizeValue();
+}
+
+/**
+* The value of the slider of Size, at its right: 120 %, or 100 % (default)
+*/
+function syncSizeValue() {
+	var field = settingsField('textSize');
+	var value = document.getElementById('GM_config_textSizeValue');
+	if (field && value) {
+		value.textContent = tr(Number(field.value) == 100 ? 'sizeValueDefault' : 'sizeValue', {value: field.value});
+	}
+}
+
+/**
+* The sections of the settings dialog folded or unfolded by their header (SF-8): a chevron at its right (SETTINGS_CSS), a click, Enter or
+* Space on it; each one as the user left it, the first time as settingsUnfolded asks
+*/
+function setupSections() {
+	var folded = foldedSections();
+	var holders = document.querySelectorAll('#GM_config .section_header_holder');
+
+	for (var i=0; i<holders.length; i++) {
+		var holder = holders[i];
+		var head = holder.querySelector('.section_header');
+		var key = Object.keys(SECTION_KEYS).filter(function (id) {
+			return holder.querySelector('#GM_config_' + id + '_var') != null;
+		}).map(function (id) { return SECTION_KEYS[id]; })[0];
+		if (head == null || key == null) {
+			continue;
+		}
+		holder.setAttribute('data-section', key);
+		head.setAttribute('role', 'button');
+		head.tabIndex = 0;
+		head.addEventListener('click', function (e) {
+			var h = e.currentTarget.parentNode;
+			foldSection(h, !h.classList.contains('emlFolded'), true);
+		}, false);
+		head.addEventListener('keydown', function (e) {
+			if (e.key == 'Enter' || e.key == ' ') {
+				e.preventDefault();
+				e.currentTarget.click();
+			}
+		}, false);
+		foldSection(holder, folded.indexOf(key) >= 0, false);
+	}
+}
+
+/**
+* The sections folded: as the user left them (settings_folded), or all but those of settingsUnfolded
+*/
+function foldedSections() {
+	try {
+		var stored = JSON.parse(GM_getValue('settings_folded', 'null'));
+		if (Array.isArray(stored)) {
+			return stored;
+		}
+	}
+	catch (e) {
+		trace('foldedSections() not read: ' + e);
+	}
+	return Object.keys(SECTION_KEYS).map(function (id) { return SECTION_KEYS[id]; }).filter(function (key) {
+		return settingsUnfolded.indexOf(key) < 0;
+	});
+}
+
+/**
+* Fold or unfold a section of the settings dialog; stored at once when the user did it, without Save
+*/
+function foldSection(holder, fold, store) {
+	var head = holder.querySelector('.section_header');
+
+	holder.classList.toggle('emlFolded', fold);
+	head.setAttribute('aria-expanded', String(!fold));
+	head.title = tr(fold ? 'sectionUnfold' : 'sectionFold');
+	if (store) {
+		GM_setValue('settings_folded', JSON.stringify([].map.call(document.querySelectorAll('#GM_config .section_header_holder.emlFolded'),
+			function (h) { return h.getAttribute('data-section'); })));
+	}
+}
+
+/**
+* The section of a field of the settings dialog unfolded (a wrong value, a value changed by Reset), stored
+*/
+function unfoldSectionOf(node) {
+	var holder = node && node.closest ? node.closest('.section_header_holder') : null;
+	if (holder && holder.classList.contains('emlFolded')) {
+		foldSection(holder, false, true);
+	}
+}
+
+/**
+* The buttons at the top right follow the menu (SF-2.14): as soon as a control of the top toolbar is in it, they are too,
+* their list grayed out on In the menu, a note under it; the choice of the user is kept, and given back without it
+*/
+function syncToolbarButtons() {
+	var buttons = settingsField('tbButtonsTop');
+	var note = document.getElementById('GM_config_tbForced');
+	var forced;
+
+	if (buttons == null || note == null) {
+		return;
+	}
+	forced = ['tbEditTop', 'tbExportTop', 'tbServerTop', 'tbCategoryTop'].some(function (id) { return settingsField(id).value == 'menu'; });
+	if (forced && !buttons.disabled) {
+		buttons.setAttribute('data-own', buttons.value);
+		buttons.value = 'menu';
+	}
+	else if (!forced && buttons.disabled && buttons.value == 'menu' && buttons.hasAttribute('data-own')) {
+		buttons.value = buttons.getAttribute('data-own');
+	}
+	buttons.disabled = forced;
+	note.hidden = !forced;
+}
+
+/**
+* Before saving: the choice of the user for the buttons at the top right, rather than the one the menu forces (SF-2.14)
+*/
+function restoreToolbarButtons() {
+	var buttons = settingsField('tbButtonsTop');
+	if (buttons && buttons.disabled && buttons.hasAttribute('data-own')) {
+		buttons.value = buttons.getAttribute('data-own');
+	}
+}
+
+/**
 * Replace the "Reset to defaults" link of GM_config by a button at the left of the buttons
 * The button sets every setting back to its default value, in the dialog only: Local is checked
 * and every server removed. The settings it changed are highlighted, and a notice says that
@@ -5289,7 +7116,8 @@ function syncPopupScroll() {
 function addResetButton() {
 	var bar = document.getElementById('GM_config_buttons_holder');
 	var button = document.createElement('button');
-	var others = ['language', 'popupView', 'closeMessage', 'showCategories', 'showServerList', 'popupCorner', 'popupScroll', 'popupHeight', 'popupWidth', 'checkFilter', 'editCol', 'editRow'];
+	var others = ['language', 'theme', 'textSize', 'popupView', 'closeMessage', 'popupCorner', 'popupScroll', 'popupRows', 'popupCols', 'checkFilter',
+		'editCol', 'editRow'].concat(Object.keys(TOOLBAR_FIELDS), SHORTCUT_ORDER.map(shortcutId));
 	var editor = ['serverName', 'serverMethod'].concat(METHOD_SETTINGS);
 
 	button.type = 'button';
@@ -5323,6 +7151,9 @@ function addResetButton() {
 		}
 		showServers();
 		syncPopupScroll();
+		syncToolbarButtons();
+		syncSizeValue();
+		document.querySelectorAll('#GM_config .changed').forEach(unfoldSectionOf);
 		if (changed == 0) {
 			showNotice(tr('resetNone'), null);
 			return;
@@ -5335,6 +7166,8 @@ function addResetButton() {
 			}
 			showServers();
 			syncPopupScroll();
+			syncToolbarButtons();
+			syncSizeValue();
 			// the text displayed for the server being edited, even if not kept yet
 			for (var i=0; i<editor.length; i++) {
 				settingsField(editor[i]).value = before.values[editor[i]];
@@ -5418,30 +7251,42 @@ function checkSettings() {
 
 	clearSettingsErrors();
 	errors = serverErrors();
-	if (!whole.test(value('popupHeight'))) {
-		errors.push(['popupHeight', tr('wholeNumber')]);
+	if (!whole.test(value('popupRows'))) {
+		errors.push(['popupRows', tr('wholeNumber')]);
 	}
-	else if (parseInt(value('popupHeight'), 10) > 0 && parseInt(value('popupHeight'), 10) < 40) {
-		errors.push(['popupHeight', tr('heightMin')]);
+	if (!whole.test(value('popupCols'))) {
+		errors.push(['popupCols', tr('wholeNumber')]);
 	}
-	if (!whole.test(value('popupWidth'))) {
-		errors.push(['popupWidth', tr('wholeNumber')]);
-	}
-	else if (parseInt(value('popupWidth'), 10) > 0 && parseInt(value('popupWidth'), 10) < 100) {
-		errors.push(['popupWidth', tr('widthMin')]);
+	else if (parseInt(value('popupCols'), 10) > 0 && parseInt(value('popupCols'), 10) < POPUP_COLS_MIN) {
+		errors.push(['popupCols', tr('widthMin', {min: POPUP_COLS_MIN})]);
 	}
 	if (parseCheckFilter(value('checkFilter')).error) {
 		errors.push(['checkFilter', parseCheckFilter(value('checkFilter')).error]);
 	}
-	if (!whole.test(value('editCol')) || parseInt(value('editCol'), 10) < 1) {
+	if (!whole.test(value('editCol'))) {
 		errors.push(['editCol', tr('wholeAtLeast1')]);
+	}
+	else if (parseInt(value('editCol'), 10) < EDIT_COLS_MIN) {
+		errors.push(['editCol', tr('editColMin', {min: EDIT_COLS_MIN})]);
 	}
 	if (!whole.test(value('editRow')) || parseInt(value('editRow'), 10) < 1) {
 		errors.push(['editRow', tr('wholeAtLeast1')]);
 	}
+	// a letter used by two shortcuts: refused on the second one (SF-9)
+	var letters = {};
+	SHORTCUT_ORDER.forEach(function (action) {
+		var letter = settingsFieldValue(shortcutId(action));
+		if (letter && letters[letter]) {
+			errors.push([shortcutId(action), tr('keyTwice', {action: tr('key.' + letters[letter])})]);
+		}
+		else if (letter) {
+			letters[letter] = action;
+		}
+	});
 
 	for (var i=0; i<errors.length; i++) {
 		showSettingsError(errors[i][0], errors[i][1]);
+		unfoldSectionOf(settingsField(errors[i][0]));	// a wrong value is never hidden in a folded section
 	}
 	if (errors.length > 0) {
 		trace('checkSettings() ' + errors.length + ' wrong value(s)');
@@ -5452,7 +7297,7 @@ function checkSettings() {
 
 /**
 * Store one setting at once, outside the settings dialog ("Don't display again" of the message of the
-* closed popup, I-3): on top of the stored settings, the other ones left exactly as the user saved them
+* closed popup, SF-10.4): on top of the stored settings, the other ones left exactly as the user saved them
 */
 function storeSetting(id, value) {
 	var stored = GM_config.read();
@@ -5484,11 +7329,25 @@ function saveConfig() {
 
 	emuleCat = strToCat(GM_config.get('emuleCat'));
 	if(emuleCat==-1) {
-		alert(tr('alertCategory'));
+		settingsNotices.push(tr('alertCategory'));
 		GM_config.set('emuleCat', '*default=0');
 		emuleCat = strToCat('*default=0');
 		corrected.emuleCat = '*default=0';
 	}
+
+	theme = GM_config.get('theme');
+	if (theme != 'auto' && !THEMES[theme]) {
+		theme = 'auto';
+	}
+	// the size in percent, on a slider (SF-2.5): a value out of its range or of its steps, or a name of the first trials of
+	// 0.15 (small, medium, large), is the size of the earlier versions, stored once
+	textSize = Number(GM_config.get('textSize'));
+	if (!(textSize >= SIZE_MIN && textSize <= SIZE_MAX) || (textSize - SIZE_MIN) % SIZE_STEP != 0) {
+		textSize = 100;
+		GM_config.set('textSize', textSize);
+		corrected.textSize = textSize;
+	}
+	GM_config.css.stylish = scaledCss(SETTINGS_CSS);	// the settings dialog at the size chosen
 
 	popupView = GM_config.get('popupView');
 	if (['maximized', 'minimized', 'closed'].indexOf(popupView) < 0) {
@@ -5511,23 +7370,39 @@ function saveConfig() {
 		popupScroll = 'floating';	// at the bottom of the window, the popup always stays in view (SF-2.2)
 	}
 	closeMessage = (GM_config.get('closeMessage') !== false);
-	showCategories = (GM_config.get('showCategories') !== false);
-	showServerList = (GM_config.get('showServerList') !== false);
-
-	popupHeight = GM_config.get('popupHeight');
-	if (popupHeight > 0 && popupHeight < 40 ) {
-		alert(tr('alertHeight'));
-		GM_config.set("popupHeight",0);
-		popupHeight = 0;
-		corrected.popupHeight = 0;
+	shortcuts = readShortcuts(GM_config.read());	// the letters of the keyboard shortcuts (SF-9)
+	// where the controls of the toolbars are shown (SF-2.14); the checkboxes of 0.14, Show the category list and Show the
+	// server list, unchecked, are the lists shown nowhere, stored once
+	var lists = { tbServerTop: 'showServerList', tbServerBottom: 'showServerList', tbCategoryTop: 'showCategories', tbCategoryBottom: 'showCategories' };
+	for (var field in TOOLBAR_FIELDS) {
+		if (saved[field] === undefined && lists[field] && saved[lists[field]] === false) {
+			GM_config.set(field, 'none');
+			corrected[field] = 'none';
+		}
+		var choice = GM_config.get(field);
+		toolbars[TOOLBAR_FIELDS[field]] = toolbarChoices(field)[choice] ? choice : TOOLBARS_DEFAULT[TOOLBAR_FIELDS[field]];
 	}
+	showServerList = (toolbars.serverTop != 'none' || toolbars.serverBottom != 'none');
+	showCategories = (toolbars.categoryTop != 'none' || toolbars.categoryBottom != 'none');
 
-	popupWidth = GM_config.get('popupWidth');
-	if (popupWidth > 0 && popupWidth < 100 ) {
-		alert(tr('alertWidth'));
-		GM_config.set("popupWidth",0);
-		popupWidth = 0;
-		corrected.popupWidth = 0;
+	// the maximum height and width of the popup in lines of its list and in characters (0.15), in place of pixels
+	// (popupHeight, popupWidth), converted once: a line of the list is 17 px high, a character 5.4 px wide, the
+	// popup without its list 68 px high, in the size of the earlier versions
+	if (saved.popupRows === undefined && saved.popupHeight !== undefined) {
+		GM_config.set('popupRows', (saved.popupHeight > 0) ? Math.max(1, Math.round((saved.popupHeight - 68) / 17)) : 0);
+		corrected.popupRows = GM_config.get('popupRows');
+	}
+	if (saved.popupCols === undefined && saved.popupWidth !== undefined) {
+		GM_config.set('popupCols', (saved.popupWidth > 0) ? Math.max(POPUP_COLS_MIN, Math.round(saved.popupWidth / 5.4)) : 0);
+		corrected.popupCols = GM_config.get('popupCols');
+	}
+	popupRows = GM_config.get('popupRows');
+	popupCols = GM_config.get('popupCols');
+	if (popupCols > 0 && popupCols < POPUP_COLS_MIN) {
+		settingsNotices.push(tr('alertWidth', {max: POPUP_COLS_MIN - 1}));
+		GM_config.set('popupCols', 0);
+		popupCols = 0;
+		corrected.popupCols = 0;
 	}
 
 	// a filter that can not be read is refused by Save (checkSettings()): one stored anyway is
@@ -5540,6 +7415,11 @@ function saveConfig() {
 	checkRegExp = filter.error ? null : filter.re;
 
 	editCol = GM_config.get('editCol');
+	if (editCol < EDIT_COLS_MIN) {	// stored by an older version: the edit box widened, so that the menu stays reachable
+		GM_config.set('editCol', EDIT_COLS_MIN);
+		editCol = EDIT_COLS_MIN;
+		corrected.editCol = EDIT_COLS_MIN;
+	}
 	editRow = GM_config.get('editRow');
 
 	// GM_config.set() only changes the value in memory: without storing it, the invalid
@@ -5656,7 +7536,7 @@ function boxTitle(name) {
 }
 
 /**
-* The language of the texts (I-7): the setting Language, read from the storage of GM_config before it is
+* The language of the texts (SF-12): the setting Language, read from the storage of GM_config before it is
 * set up, as its fields need the texts; Browser language: the language of the browser when the script has
 * its texts, English otherwise
 */
@@ -5675,7 +7555,7 @@ function scriptLanguage() {
 }
 
 /**
-* A text in the language of the script (TEXTS, I-7), English when it has none
+* A text in the language of the script (TEXTS, SF-12), English when it has none
 * @param key the name of the text
 * @param values the values of its {names}, if any
 */
@@ -5693,18 +7573,65 @@ function tr(key, values) {
 }
 
 /**
-* A label with the letter of its keyboard shortcut underlined, marked by & in the text (I-7); not
-* underlined when the label of a language does not hold it
+* The keyboard shortcut of an action, as shown: Ctrl+Alt+D; '' when it has none (shortcuts, SF-9)
 */
-function trLabel(key) {
-	return tr(key).replace(/&(.)/, '<u>$1</u>');
+function shortcutText(action) {
+	return shortcuts[action] ? 'Ctrl+Alt+' + shortcuts[action].toUpperCase() : '';
 }
 
 /**
-* A label without the mark of its shortcut
+* The ways to open the popup again by the keyboard, in the message of the closed popup (SF-10.4): an item per shortcut that
+* exists, Open Popup then Switch view; none without them
 */
-function trPlain(key) {
-	return tr(key).replace('&', '');
+function closedKeys() {
+	return ['open', 'view'].filter(function (action) { return shortcuts[action]; }).map(function (action) {
+		return tr('closedKey', {key: shortcutText(action)});
+	}).join('');
+}
+
+/**
+* The help of Default popup view: the popup closed, it is opened from the menu of the userscript manager, and by the
+* keyboard shortcuts that exist (Open Popup, Switch view, Settings), named only when there is one
+*/
+function popupViewHelp() {
+	var code = function (action) { return '`' + shortcutText(action) + '`'; };
+	var popup = ['open', 'view'].filter(function (action) { return shortcuts[action]; }).map(code);
+	var list = [];
+
+	if (popup.length > 0) {
+		list.push(tr('popupViewKeysPopup', {keys: popup.join(tr('keysOr'))}));
+	}
+	if (shortcuts.settings) {
+		list.push(tr('popupViewKeysDialog', {key: code('settings')}));
+	}
+	return tr('popupViewHelp', {keys: (list.length > 0) ? tr('popupViewKeys', {list: list.join(', ')}) : ''});
+}
+
+/**
+* A tooltip, with the keyboard shortcut of its action when it has one: Download the checked links (Ctrl+Alt+D)
+*/
+function keyTitle(key, action) {
+	return tr(key) + (shortcuts[action] ? ' (' + shortcutText(action) + ')' : '');
+}
+
+/**
+* A label, the letter of the keyboard shortcut of its action underlined when the label holds it (SF-12): the
+* first one starting a word, else the first one; the label as it is without a shortcut
+*/
+function keyLabel(key, action) {
+	var label = tr(key);
+	var letter = (shortcuts[action] || '').toLowerCase();
+	var at = -1;
+
+	for (var i = 0; letter && i < label.length; i++) {
+		if (label[i].toLowerCase() == letter && (at < 0 || i == 0 || label[i - 1] == ' ')) {
+			at = i;
+			if (i == 0 || label[i - 1] == ' ') {
+				break;
+			}
+		}
+	}
+	return (at < 0) ? label : label.slice(0, at) + '<u>' + label[at] + '</u>' + label.slice(at + 1);
 }
 
 /**

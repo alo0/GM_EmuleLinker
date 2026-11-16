@@ -74,31 +74,42 @@ The popup lists the files of the page, with their size, each with a checkbox, be
 - **Download** sends the checked links. Clicking a file name sends this link only.
 - The box of the top or the bottom toolbar checks or unchecks every link. Next to it, the counter tells how many links Download sends, out of the links of the page.
 - At the right of the top toolbar: **Settings** (⚙) opens the settings dialog, **Help** (?) shows a short help next to the popup (drag its title bar to move it), **Minimize** (▲) keeps only the top toolbar, **Maximize** (▼) shows the whole popup again, and **Close** (✕) closes it.
+- **Toolbars**, a section of the settings, chooses where each control is shown, from left to right: in the top or the bottom toolbar, in the menu ☰ of the top toolbar, or not at all. As soon as a control is in the menu, the buttons at the top right are too. Edit mode and Export can also be shown at the top.
+- In a narrow window (or a phone, or with a large size), the controls that do not fit go into a menu button (☰) at the right of the top toolbar, the buttons at the top right first, then, in each toolbar on its own, its controls one by one from left to right (Edit mode, Export, the server list, the category list): the check box, the counter and Download stay, and the controls never shrink.
 - The popup is at the top left of the window by default. **Popup position**, in the Popup section of the settings, puts it in another corner, and **Popup scrolling** chooses whether it stays in view when the page scrolls (at the bottom of the window, it always does). It can be resized at the top left only; at the bottom, ▼ minimizes it and ▲ maximizes it.
 - When the list does not fit in the popup, a light shadow on its top or bottom edge tells that there are more links beyond it.
 - Every link is checked by default. To leave some of them unchecked, write a regular expression on the file name in **Links checked by default**, in the Popup section of the settings: the links whose name matches it are checked, the others are listed in gray, unchecked. For instance `/^(?!.*\.emulecollection$)/i` checks every file but the eMule collections, and `/\.(cbz|cbr|rar|zip)$/i` only the `.cbz`, `.cbr`, `.rar` and `.zip` files (`/i` ignores the case). With the popup closed, these links only are sent.
-- With at least one server set in the settings, a first drop-down list chooses the server that receives the links: **Local**, then your servers. The choice applies to the current page only: each new page starts on the server checked in the settings. To hide the list, uncheck **Show the server list** in the Popup section of the settings.
-- The next drop-down list chooses the category of the downloads (eMule and aMule), among the ones of the server chosen. The choice applies to the current page only: each new page starts on the default category of the settings. The list is grayed out when there is only one category; a long name is cut, and shown whole in the tooltip. To hide the list, uncheck **Show the category list** in the Popup section of the settings: the links are then sent to the default category.
+- With at least one server set in the settings, a first drop-down list chooses the server that receives the links: **Local**, then your servers. The choice applies to the current page only: each new page starts on the server checked in the settings. Where it is shown, in each toolbar or in the menu ☰, or not at all, is chosen in the **Toolbars** section of the settings.
+- The next drop-down list chooses the category of the downloads (eMule and aMule), among the ones of the server chosen. The choice applies to the current page only: each new page starts on the default category of the settings. The list is grayed out when there is only one category; a long name is cut, and shown whole in the tooltip. It can be shown in each toolbar, in the menu ☰, or not at all (the **Toolbars** section of the settings): shown nowhere, the links are sent to the default category.
 - **Edit mode** replaces the list by a text box holding the links, which you can edit: its content is what is sent. **Normal mode** goes back to the list.
+- **Export**, after Edit mode in the bottom toolbar, exports the links that Download would send (in edit mode, those of the text box): **Copy the links**, one per line, to paste them elsewhere; an **eMule collection** (`.emulecollection`), which eMule opens; a **CSV** file (link, name, size, page), for a spreadsheet; or a **text** file, one link per line. The files are named after the page and the date, and saved in your downloads folder. `Ctrl+Alt+C` copies the links at once, even with the popup closed.
 - The script speaks English or French: **Language**, in the General section of the settings, follows the language of the browser by default.
+- **Theme**, in the General section of the settings: **Automatic** by default, Default light, or Windows 11 dark when Windows or the browser is in dark mode; or one theme for good: Default light, macOS, Firefox light, Monochrome light, Transparent glass, Legacy (the look of the versions up to 0.13), Windows 11 dark, Chrome dark, Steel blue night, OLED black. To change a theme or create one, see [THEMES.md](THEMES.md).
+
+  ![The popup in each theme](screenshots/theme/0_overview.png)
+
+- **Size**, in the General section of the settings: a slider from 80 % to 160 % (100 % by default), for a tablet or a high-resolution screen: the text, the buttons and the spacing of the popup, of its messages, of its help and of the settings grow together.
+- The settings dialog opens with its sections General and Servers unfolded: click the title of a section to fold or unfold it. It opens again as you left it.
+
 - Closing the popup, or switching it to edit mode, applies to the current page only: each page opens the popup in the **Default popup view** chosen in the General section of the settings, **Maximized** (the list of the links), **Minimized** (its top toolbar only) or **Closed**. With Closed, the popup and the settings dialog open only through the keyboard shortcuts below or the Tampermonkey menu. The links can still be sent while the popup is closed.
-- When you close the popup (✕, `Ctrl+Alt+C` or the menu), a message in the middle of the window tells how to open it again, and how to keep it closed on every page. Check **Don't display again** to hide it for good; **Show a message when the popup is closed**, in the General section of the settings, shows it again.
+- When you close the popup (✕, or the menu ☰), a message in the middle of the window tells how to open it again, and how to keep it closed on every page. Check **Don't display again** to hide it for good; **Show a message when the popup is closed**, in the Popup section of the settings, shows it again.
 - With **eMule (web)** and **aMule**, the popup shows "Please wait..." under its top toolbar while the client answers, the **Download** buttons being disabled meanwhile, then its answer, in a band over the top of the list: the number of links added, or what went wrong (password refused, client unreachable...). The band of links added goes away after a few seconds, an error stays until you close it (✕). With the popup closed, the band is shown alone, in the corner of the popup.
 
-All the commands are also available in the Tampermonkey menu, under **Emule Linker**, and through keyboard shortcuts:
+The Tampermonkey menu, under **Emule Linker**, opens the settings, the help and the popup, and switches the debug traces. The keyboard shortcuts, by default:
 
 | Shortcut | Action |
 |---|---|
 | `Ctrl+Alt+D` | Download the checked links (the links checked by default when the popup is closed) |
 | `Ctrl+Alt+A` | Check or uncheck all the links |
-| `Ctrl+Alt+M` | Switch between normal mode and edit mode |
-| `Ctrl+Alt+X` | Switch the view: maximized, minimized, closed |
+| `Ctrl+Alt+C` | Copy the links that Download would send |
+| `Ctrl+Alt+W` | Switch the view: maximized, minimized, closed |
 | `Ctrl+Alt+O` | Open the popup, or maximize it |
-| `Ctrl+Alt+C` | Close the popup, with a message telling how to open it again |
 | `Ctrl+Alt+S` | Open the settings dialog |
 | `Ctrl+Alt+H` | Show or hide the help |
 
-Up to version 0.13, `Ctrl+Alt+A` added the links: it is now `Ctrl+Alt+D`.
+The **Keyboard shortcuts** section of the settings chooses the letter of each command, or **None** to turn it off; the menu of Export, Edit mode, Close and the debug traces can be given one too. A letter that types a character with AltGr on your keyboard (E on a French keyboard, for €) does not work in Firefox.
+
+Up to version 0.13, `Ctrl+Alt+A` added the links: it is now `Ctrl+Alt+D`. Up to version 0.14, `Ctrl+Alt+C` closed the popup, `Ctrl+Alt+X` switched the view (now `Ctrl+Alt+W`: Firefox takes `Ctrl+Alt+X`) and `Ctrl+Alt+M` the mode.
 
 ## Support
 
